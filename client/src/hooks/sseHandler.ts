@@ -348,6 +348,10 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 			if (p?.run_id) s.updatePane(p.run_id, { status: "paused" });
 			break;
 
+		case "sub_agent_task_replaced":
+			if (p?.run_id) s.updatePane(p.run_id, { task: p.task ?? "" });
+			break;
+
 		case "sub_agent_resumed":
 			if (p?.run_id) s.updatePane(p.run_id, { status: "running" });
 			break;

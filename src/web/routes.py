@@ -148,6 +148,24 @@ class Routes:
             return {"resumed": True, "run_id": run_id}
         return {"resumed": False, "run_id": run_id, "error": "Активный run не найден"}
 
+    def message_run(self, run_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        message = str(body.get("message", ""))
+        if not message:
+            return {"error": "message is empty"}, HTTPStatus.BAD_REQUEST
+        sent = self.ctx.message_run(run_id, message)
+        if sent:
+            return {"sent": True, "run_id": run_id}
+        return {"sent": False, "run_id": run_id, "error": "Активный run не найден"}
+
+    def replace_task_run(self, run_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        new_task = str(body.get("task", ""))
+        if not new_task:
+            return {"error": "task is empty"}, HTTPStatus.BAD_REQUEST
+        replaced = self.ctx.replace_task(run_id, new_task)
+        if replaced:
+            return {"replaced": True, "run_id": run_id}
+        return {"replaced": False, "run_id": run_id, "error": "Активный run не найден"}
+
     def confirm(self, request_id: str, approved: bool) -> dict[str, Any] | tuple[dict[str, Any], HTTPStatus]:
         found = self.confirmation.handle_confirm_request(request_id, approved)
         if not found:

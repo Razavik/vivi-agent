@@ -112,6 +112,23 @@ class ServerContext:
         self.run_registry.update(run_id, status="running", updated_at=time.time())
         return True
 
+    def message_run(self, run_id: str, message: str) -> bool:
+        with self._lock:
+            controller = self._run_controllers.get(run_id)
+        if controller is None:
+            return False
+        controller.post_message(message)
+        return True
+
+    def replace_task(self, run_id: str, new_task: str) -> bool:
+        with self._lock:
+            controller = self._run_controllers.get(run_id)
+        if controller is None:
+            return False
+        controller.replace_task(new_task)
+        self.run_registry.update(run_id, task=new_task, updated_at=time.time())
+        return True
+
     def remove_run_controller(self, run_id: str) -> None:
         with self._lock:
             self._run_controllers.pop(run_id, None)

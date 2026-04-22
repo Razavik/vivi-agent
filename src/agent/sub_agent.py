@@ -157,6 +157,20 @@ class SubAgent:
                     if controller.is_cancelled():
                         raise AgentError(f"Агент {self.display_name} прерван по run_id={run_id}")
                     self._emit(event_sink, "sub_agent_resumed", {"agent": self.name, "run_id": run_id})
+                if controller is not None:
+                    for msg in controller.drain_inbox():
+                        if msg.get("type") == "replace_task":
+                            new_task = str(msg.get("message", ""))
+                            state.user_goal = new_task
+                            self._emit(event_sink, "sub_agent_task_replaced", {
+                                "agent": self.name, "run_id": run_id, "task": new_task,
+                            })
+                        else:
+                            content = str(msg.get("message", ""))
+                            state.add_chat_message("user", content)
+                            self._emit(event_sink, "sub_agent_message_received", {
+                                "agent": self.name, "run_id": run_id, "message": content,
+                            })
                 messages = self._build_messages(system_prompt, state, registry, images=images if step_number == 1 else None)
                 from src.llm.prompt_builder import count_tokens
                 token_count = count_tokens(messages)

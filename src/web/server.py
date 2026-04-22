@@ -70,6 +70,20 @@ class AgentWebHandler(BaseHTTPRequestHandler):
                 self._send_json(routes.resume_run(run_id.strip("/")))
             else:
                 self._send_json({"error": "run id missing"}, status=HTTPStatus.BAD_REQUEST)
+        elif self.path.startswith("/api/runs/") and self.path.endswith("/message"):
+            run_id = self.path[len("/api/runs/"):-len("/message")]
+            payload = self._read_json_body()
+            if run_id and payload is not None:
+                self._send_json(routes.message_run(run_id.strip("/"), payload))
+            else:
+                self._send_json({"error": "run id or body missing"}, status=HTTPStatus.BAD_REQUEST)
+        elif self.path.startswith("/api/runs/") and self.path.endswith("/replace-task"):
+            run_id = self.path[len("/api/runs/"):-len("/replace-task")]
+            payload = self._read_json_body()
+            if run_id and payload is not None:
+                self._send_json(routes.replace_task_run(run_id.strip("/"), payload))
+            else:
+                self._send_json({"error": "run id or body missing"}, status=HTTPStatus.BAD_REQUEST)
         elif self.path == "/api/confirm":
             self._handle_confirm(routes)
         elif self.path == "/api/history/clear":
