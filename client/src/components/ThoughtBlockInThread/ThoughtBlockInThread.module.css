@@ -1,0 +1,52 @@
+.messageThoughtWrap {
+	margin-bottom: 6px;
+}
+
+.messageThought {
+	padding: 0;
+	font-size: 14px;
+	color: var(--text-muted);
+	background: transparent;
+	border-radius: 0;
+	line-height: 1.4;
+}
+
+.hidden {
+	display: none;
+}
+
+.messageThoughtToggle {
+	background: transparent;
+	padding: 0;
+	padding-top: 6px;
+	padding-bottom: 6px;
+	border: none;
+	cursor: pointer;
+	font-size: 12px;
+	color: var(--text-muted);
+	user-select: none;
+	margin: 0;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-family: inherit;
+}
+
+.messageThoughtToggle:hover {
+	color: var(--text-main);
+}
+
+.messageThoughtToggle span {
+	font-size: 12px;
+	line-height: 1.1;
+	display: flex;
+	align-items: center;
+}
+
+.thoughtIcon {
+	transition: transform 0.2s ease;
+}
+
+.open {
+	transform: rotate(90deg);
+}

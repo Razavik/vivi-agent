@@ -1,0 +1,78 @@
+.toolWrap {
+	margin-bottom: 6px;
+}
+
+.toolToggle {
+	background: transparent;
+	padding: 0;
+	padding-top: 6px;
+	padding-bottom: 6px;
+	border: none;
+	cursor: pointer;
+	font-size: 12px;
+	color: var(--text-muted);
+	user-select: none;
+	margin: 0;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-family: inherit;
+}
+
+.toolToggle:hover {
+	color: var(--text-main);
+}
+
+.toolToggle span {
+	font-size: 12px;
+	line-height: 1.1;
+	display: flex;
+	align-items: center;
+}
+
+.toolIcon {
+	transition: transform 0.2s ease;
+}
+
+.toolIcon.open {
+	transform: rotate(90deg);
+}
+
+.toolResult {
+	background: var(--bg-input);
+	border-radius: 8px;
+	padding: 12px;
+	margin-top: 8px;
+	max-height: 300px;
+	overflow-y: auto;
+}
+
+.toolResult::-webkit-scrollbar {
+	width: 6px;
+}
+
+.toolResult::-webkit-scrollbar-track {
+	background: transparent;
+	margin-top: 10px;
+	margin-bottom: 10px;
+}
+
+.toolResult::-webkit-scrollbar-thumb {
+	background: var(--border);
+	border-radius: 3px;
+}
+
+.toolResult.hidden {
+	display: none;
+}
+
+.toolResult pre {
+	margin: 0;
+	overflow-x: auto;
+}
+
+.toolResult code {
+	font-family: monospace;
+	font-size: 13px;
+	color: var(--text-main);
+}

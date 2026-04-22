@@ -1,0 +1,162 @@
+.page {
+	height: 100%;
+	overflow-y: auto;
+	padding: 32px 40px;
+}
+
+.page::-webkit-scrollbar {
+	width: 6px;
+}
+.page::-webkit-scrollbar-thumb {
+	background: var(--border);
+	border-radius: 3px;
+}
+
+.title {
+	font-size: 18px;
+	font-weight: 700;
+	color: var(--text-main);
+	margin-bottom: 6px;
+}
+
+.subtitle {
+	font-size: 13px;
+	color: var(--text-muted);
+	margin-bottom: 32px;
+	line-height: 1.5;
+}
+
+.section {
+	max-width: 640px;
+	background: rgba(255, 255, 255, 0.03);
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	overflow: hidden;
+	margin-bottom: 24px;
+}
+
+.sectionHeader {
+	padding: 14px 20px;
+	border-bottom: 1px solid var(--border);
+	font-size: 11px;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	color: var(--text-muted);
+}
+
+.row {
+	display: flex;
+	align-items: center;
+	padding: 14px 20px;
+	gap: 16px;
+	border-bottom: 1px solid var(--border);
+}
+
+.row:last-child {
+	border-bottom: none;
+}
+
+.rowLabel {
+	width: 200px;
+	min-width: 200px;
+	flex-shrink: 0;
+}
+
+.rowName {
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--text-main);
+	margin-bottom: 2px;
+}
+
+.rowHint {
+	font-size: 11px;
+	color: var(--text-muted);
+}
+
+.input {
+	flex: 1;
+	background: rgba(0, 0, 0, 0.25);
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	padding: 8px 12px;
+	font-size: 13px;
+	color: var(--text-main);
+	font-family: "Cascadia Code", "Consolas", monospace;
+	outline: none;
+	transition: border-color 0.15s;
+}
+
+.input:focus {
+	border-color: var(--accent);
+}
+
+.input::placeholder {
+	color: var(--text-muted);
+	opacity: 0.6;
+}
+
+.defaultBadge {
+	font-size: 11px;
+	color: var(--text-muted);
+	padding: 2px 8px;
+	background: rgba(255, 255, 255, 0.05);
+	border-radius: 6px;
+	border: 1px solid var(--border);
+	white-space: nowrap;
+	flex-shrink: 0;
+	visibility: visible;
+}
+
+.defaultBadge.hidden {
+	visibility: hidden;
+}
+
+.footer {
+	max-width: 640px;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+
+.saveBtn {
+	padding: 9px 22px;
+	background: var(--accent);
+	color: #fff;
+	border: none;
+	border-radius: 8px;
+	font-size: 13px;
+	font-weight: 600;
+	cursor: pointer;
+	transition: opacity 0.15s;
+}
+
+.saveBtn:hover {
+	opacity: 0.85;
+}
+.saveBtn:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+
+.savedMsg {
+	font-size: 12px;
+	color: var(--ok);
+}
+
+.errorMsg {
+	font-size: 12px;
+	color: var(--err);
+}
+
+.link {
+	color: var(--accent);
+	text-decoration: none;
+	opacity: 0.85;
+}
+
+.link:hover {
+	opacity: 1;
+	text-decoration: underline;
+}
