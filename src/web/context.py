@@ -8,6 +8,7 @@ from typing import Any
 from src.agent.run_control import RunController
 from src.agent.run_registry import AgentRun, RunRegistry
 from src.agent.runtime import AgentRuntime
+from src.infra.artifact_store import ArtifactStore
 from src.infra.chat_memory import ChatMemoryStore
 from src.infra.config import Settings, get_settings
 
@@ -19,6 +20,7 @@ class ServerContext:
         self.settings = settings or get_settings()
         self.memory_store = ChatMemoryStore(self.settings.memory_file)
         self.run_registry = RunRegistry()
+        self.artifact_store = ArtifactStore(self.settings.workspace_root / "data" / "artifacts")
 
         self._lock = threading.Lock()
         self._current_runtime: AgentRuntime | None = None
@@ -128,6 +130,21 @@ class ServerContext:
         controller.replace_task(new_task)
         self.run_registry.update(run_id, task=new_task, updated_at=time.time())
         return True
+
+    def create_artifact(self, run_id: str, name: str, content: str | bytes, mime_type: str = "text/plain") -> dict[str, Any]:
+        info = self.artifact_store.create(run_id, name, content, mime_type)
+        run = self.run_registry.get(run_id)
+        if run is not None:
+            artifacts = dict(run.artifacts)
+            artifacts[name] = {"mime_type": mime_type, "size": info.get("size", 0)}
+            self.run_registry.update(run_id, artifacts=artifacts, updated_at=time.time())
+        return info
+
+    def read_artifact(self, run_id: str, name: str) -> dict[str, Any]:
+        return self.artifact_store.read(run_id, name)
+
+    def list_artifacts(self, run_id: str) -> list[dict[str, Any]]:
+        return self.artifact_store.list(run_id)
 
     def remove_run_controller(self, run_id: str) -> None:
         with self._lock:

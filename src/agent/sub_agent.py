@@ -296,6 +296,7 @@ class SubAgent:
         handler_args = dict(step.args)
         if step.summary and "summary" not in handler_args:
             handler_args["summary"] = step.summary
+        handler_args["__run_id__"] = run_id
         if event_sink is not None:
             handler_args["__event_sink__"] = lambda event, payload: self._emit(event_sink, event, {"agent": self.name, "run_id": run_id, **payload})
 

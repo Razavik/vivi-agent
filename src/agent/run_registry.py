@@ -22,6 +22,7 @@ class AgentRun:
     error: str | None = None
     question: str | None = None
     answer: str | None = None
+    artifacts: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

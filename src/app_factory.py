@@ -172,6 +172,7 @@ def _build_sub_agents(
     telegram_tools = TelegramTools(settings)
     clipboard_tools = ClipboardTools()
     notification_tools = NotificationTools()
+    artifact_tools = ArtifactTools()
 
     def _make_client(agent_key: str) -> OllamaClient:
         return OllamaClient(
@@ -194,7 +195,7 @@ def _build_sub_agents(
             ToolSpec("get_chats", "Получить список чатов (limit до 100, offset, chat_type: all/unknown(user)/channel)", 0, telegram_tools.get_chats, {"limit": "int?", "offset": "int?", "chat_type": "str?"}),
             ToolSpec("get_messages", "Получить сообщения из чата (chat_id, limit до 500, offset)", 0, telegram_tools.get_messages, {"chat_id": "str", "limit": "int?", "offset": "int?"}),
             ToolSpec("get_contacts", "Получить список контактов (limit, offset)", 0, telegram_tools.get_contacts, {"limit": "int?", "offset": "int?"}),
-        ],
+        ] + extra_tools,
         client=_make_client("telegram"),
         memory_store=_make_memory_store(settings, "telegram"),
         max_steps=settings.sub_agent_max_steps,
@@ -224,7 +225,7 @@ def _build_sub_agents(
             ToolSpec("copy_file", "Скопировать файл", 1, file_tools.copy_file, {"source": "str", "destination": "str"}),
             ToolSpec("move_file", "Переместить файл", 1, file_tools.move_file, {"source": "str", "destination": "str"}),
             ToolSpec("delete_file", "Удалить файл", 2, file_tools.delete_file, {"path": "str"}),
-        ],
+        ] + extra_tools,
         client=_make_client("file"),
         memory_store=_make_memory_store(settings, "file"),
         max_steps=settings.sub_agent_max_steps,
@@ -251,7 +252,7 @@ def _build_sub_agents(
             ToolSpec("set_clipboard", "Записать текст в буфер обмена", 1, clipboard_tools.set_clipboard, {"text": "str"}),
             ToolSpec("show_notification", "Показать Windows toast-уведомление", 0, notification_tools.show_notification, {"title": "str?", "message": "str"}),
             ToolSpec("take_screenshot", "Сделать скриншот экрана и сохранить PNG", 0, notification_tools.take_screenshot, {"path": "str?"}),
-        ],
+        ] + extra_tools,
         client=_make_client("system"),
         memory_store=_make_memory_store(settings, "system"),
         max_steps=settings.sub_agent_max_steps,
@@ -267,7 +268,7 @@ def _build_sub_agents(
             ToolSpec("fetch_url", "Прочитать содержимое веб-страницы (parse_text=true → чистый текст без HTML)", 0, web_tools.fetch_url, {"url": "str", "parse_text": "bool?"}),
             ToolSpec("search_web", "Поиск в интернете через DuckDuckGo — возвращает список результатов с заголовком, URL и сниппетом", 0, web_tools.search_web, {"query": "str", "max_results": "int?"}),
             ToolSpec("open_url", "Открыть URL в браузере", 0, system_tools.open_url, {"url": "str"}),
-        ],
+        ] + extra_tools,
         client=_make_client("web"),
         memory_store=_make_memory_store(settings, "web"),
         max_steps=settings.sub_agent_max_steps,
@@ -388,12 +389,19 @@ def build_runtime(
     )
 
     # Создаём сабагентов
-    agent_registry = _build_sub_agents(client=director_client, settings=settings, event_sink=event_sink)
-
     # ask_director callback — один LLM-вызов директора для ответа на вопросы сабагентов
     ask_director_callback = _make_ask_director_callback(director_client, event_sink)
 
     # Создаём инструменты директора
+    artifact_tools = ArtifactTools(server_context) if server_context else None
+    agent_registry = build_agent_registry(
+        path_guard,
+        settings,
+        event_sink=event_sink,
+        ask_director_callback=ask_director_callback,
+        create_run_controller=create_run_controller,
+        artifact_tools=artifact_tools,
+    )
     delegate_tools = DelegateTools(
         agent_registry,
         event_sink=event_sink,
