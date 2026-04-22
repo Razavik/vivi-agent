@@ -33,6 +33,7 @@ class AgentRuntime:
         event_sink: Callable[[str, object], None] | None = None,
         user_name: str = "Пользователь",
         available_agents: list[dict[str, str]] | None = None,
+        get_active_runs: Callable[[], list[dict[str, Any]]] | None = None,
     ) -> None:
         self.client = client
         self.registry = registry
@@ -48,6 +49,7 @@ class AgentRuntime:
         self.max_consecutive_errors = max_consecutive_errors
         self.event_sink = event_sink
         self.cancelled = False
+        self.get_active_runs = get_active_runs
 
     def cancel(self) -> None:
         self.cancelled = True
@@ -103,7 +105,8 @@ class AgentRuntime:
                 self._emit("cancelled", {"step": step_number})
                 raise AgentError("Задача была прервана пользователем")
             try:
-                messages, token_count = build_messages(state, self.registry.describe_all(), self.workspace_root, self.user_name, self.available_agents, images=images if step_number == 1 else None)
+                active_runs = self.get_active_runs() if self.get_active_runs else []
+                messages, token_count = build_messages(state, self.registry.describe_all(), self.workspace_root, self.user_name, self.available_agents, images=images if step_number == 1 else None, active_runs=active_runs)
                 self._emit("context_tokens", {"count": token_count})
                 streamed_text = ""
                 last_thought = ""

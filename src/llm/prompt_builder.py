@@ -29,7 +29,7 @@ def count_tokens(messages: list[dict[str, str]], model: str = "gemma4:31b-cloud"
         return total_chars // 4
 
 
-def build_messages(state: SessionState, tool_descriptions: list[dict[str, object]], workspace_root: str, user_name: str = "Пользователь", available_agents: list[dict[str, str]] | None = None, images: list[str] | None = None) -> tuple[list[dict[str, object]], int]:
+def build_messages(state: SessionState, tool_descriptions: list[dict[str, object]], workspace_root: str, user_name: str = "Пользователь", available_agents: list[dict[str, str]] | None = None, images: list[str] | None = None, active_runs: list[dict[str, Any]] | None = None) -> tuple[list[dict[str, object]], int]:
     system_prompt = load_system_prompt()
 
     # Добавляем критические инструкции в payload
@@ -64,6 +64,7 @@ def build_messages(state: SessionState, tool_descriptions: list[dict[str, object
         "workspace_root": workspace_root,
         "user_name": user_name,
         "available_agents": available_agents or [],
+        "active_runs": active_runs or [],
     }
     user_message: dict[str, object] = {
         "role": "user",

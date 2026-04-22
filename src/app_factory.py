@@ -421,5 +421,6 @@ def build_runtime(
         event_sink=event_sink,
         user_name=settings.user_name,
         available_agents=available_agents,
+        get_active_runs=lambda: server_context.run_registry.list_active() if server_context else [],
     )
     return runtime, director_registry, settings
