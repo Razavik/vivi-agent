@@ -21,6 +21,7 @@ from src.tools.model_tools import ModelTools
 from src.tools.notification_tools import NotificationTools
 from src.tools.process_tools import ProcessTools
 from src.tools.registry import ToolRegistry, ToolSpec
+from src.tools.run_tools import RunTools
 from src.tools.system_tools import SystemTools
 from src.tools.telegram_tools import TelegramTools
 from src.tools.web_tools import WebTools
@@ -37,6 +38,13 @@ def describe_all_tools(settings: Settings | None = None) -> list[dict[str, objec
         ToolSpec("send_message", "Отправить промежуточное сообщение пользователю в чат", 0, lambda a: None, {"message": "str"}),
         ToolSpec("finish_task", "Завершить задачу и вернуть summary", 0, lambda a: None, {}),
         ToolSpec("set_agent_model", "Установить модель Ollama для агента (director/file/system/telegram/web)", 0, lambda a: None, {"agent": "str", "model": "str"}),
+        ToolSpec("get_agent_memory", "Просмотреть долгосрочную память саб-агента", 0, lambda a: None, {"agent": "str?", "limit": "int?"}),
+        ToolSpec("view_runs", "Показать активные запуски саб-агентов", 0, lambda a: None, {"limit": "int?"}),
+        ToolSpec("cancel_run", "Отменить активный запуск саб-агента по run_id", 0, lambda a: None, {"run_id": "str"}),
+        ToolSpec("pause_run", "Приостановить активный запуск саб-агента по run_id", 0, lambda a: None, {"run_id": "str"}),
+        ToolSpec("resume_run", "Возобновить приостановленный запуск саб-агента по run_id", 0, lambda a: None, {"run_id": "str"}),
+        ToolSpec("message_run", "Отправить сообщение в inbox активного запуска саб-агента по run_id", 0, lambda a: None, {"run_id": "str", "message": "str"}),
+        ToolSpec("replace_task_run", "Заменить задачу у активного запуска саб-агента по run_id", 0, lambda a: None, {"run_id": "str", "task": "str"}),
     ]
     director_tools: list[dict[str, object]] = []
     for spec in _director_specs:
@@ -276,13 +284,14 @@ def _build_sub_agents(
 
 def build_director_registry(
     delegate_tools: DelegateTools,
+    run_tools: RunTools | None = None,
 ) -> ToolRegistry:
     """Создаёт реестр инструментов директора."""
     registry = ToolRegistry()
-    specs = [
+    specs: list[ToolSpec] = [
         ToolSpec(
             "delegate_task",
-            "Делегировать задачу одному специализированному агенту. Агенты: telegram, file, system, web. Параметры: agent_name (имя), task (задача), images (опционально — список base64-строк изображений для передачи агенту)",
+            "Делегировать задачу одному специализированному агенту. Агенты: telegram, file, system, web. Параметры: agent_name (имя), task (задача), images (опционально — список base64-строк изображений для передаче агенту)",
             0,
             delegate_tools.delegate_task,
             {"agent_name": "str", "task": "str", "images": "list?"},
@@ -311,6 +320,51 @@ def build_director_registry(
             {"agent": "str?", "limit": "int?"},
         ),
     ]
+    if run_tools is not None:
+        specs.extend([
+            ToolSpec(
+                "view_runs",
+                "Показать активные запуски саб-агентов. limit — максимальное количество записей.",
+                0,
+                run_tools.view_runs,
+                {"limit": "int?"},
+            ),
+            ToolSpec(
+                "cancel_run",
+                "Отменить активный запуск саб-агента по run_id.",
+                0,
+                run_tools.cancel_run,
+                {"run_id": "str"},
+            ),
+            ToolSpec(
+                "pause_run",
+                "Приостановить активный запуск саб-агента по run_id.",
+                0,
+                run_tools.pause_run,
+                {"run_id": "str"},
+            ),
+            ToolSpec(
+                "resume_run",
+                "Возобновить приостановленный запуск саб-агента по run_id.",
+                0,
+                run_tools.resume_run,
+                {"run_id": "str"},
+            ),
+            ToolSpec(
+                "message_run",
+                "Отправить сообщение в inbox активного запуска саб-агента по run_id.",
+                0,
+                run_tools.message_run,
+                {"run_id": "str", "message": "str"},
+            ),
+            ToolSpec(
+                "replace_task_run",
+                "Заменить задачу (user_goal) у активного запуска саб-агента по run_id.",
+                0,
+                run_tools.replace_task_run,
+                {"run_id": "str", "task": "str"},
+            ),
+        ])
     for spec in specs:
         registry.register(spec)
     return registry
@@ -322,6 +376,7 @@ def build_runtime(
     event_sink: Callable[[str, object], None] | None = None,
     create_run_controller: Callable[[str, str, str], object] | None = None,
     settings: Settings | None = None,
+    server_context: object | None = None,
 ) -> tuple[AgentRuntime, ToolRegistry, Settings]:
     settings = settings or get_settings()
 
@@ -345,7 +400,8 @@ def build_runtime(
         ask_director_callback=ask_director_callback,
         create_run_controller=create_run_controller,
     )
-    director_registry = build_director_registry(delegate_tools)
+    run_tools = RunTools(server_context) if server_context else None
+    director_registry = build_director_registry(delegate_tools, run_tools)
 
     # Описания агентов для промпта директора
     available_agents = agent_registry.describe_all()

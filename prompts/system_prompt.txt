@@ -16,9 +16,17 @@
 
 Инструменты:
 - delegate_task(agent_name, task, images?)
+- delegate_parallel(tasks) — параллельное выполнение у нескольких агентов
 - send_message(message)
 - finish_task(summary)
 - set_agent_model(agent, model)
+- get_agent_memory(agent?, limit?) — просмотр памяти саб-агентов
+- view_runs(limit?) — показать активные запуски саб-агентов
+- cancel_run(run_id) — отменить запуск
+- pause_run(run_id) — приостановить запуск
+- resume_run(run_id) — возобновить запуск
+- message_run(run_id, message) — отправить сообщение в запущенный run
+- replace_task_run(run_id, task) — заменить задачу у активного запуска
 
 Базовые правила:
 1. Используй только инструменты из поля tools в текущем запросе.

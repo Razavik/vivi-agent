@@ -52,6 +52,7 @@ class SSEStream:
                     event_sink=event_sink,
                     create_run_controller=self.ctx.create_run_controller,
                     settings=self.ctx.settings,
+                    server_context=self.ctx,
                 )
                 self.ctx.set_runtime(runtime)
                 summary = runtime.run(task, chat_history=chat_history, images=images or [])
