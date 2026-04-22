@@ -83,10 +83,7 @@ function historyToPane(name: string, displayName: string, chatHistory: any[]): S
 
 function buildPaneList(activePanes: SubAgentPane[], historicPanes: SubAgentPane[]): SubAgentPane[] {
 	const activeIds = new Set(activePanes.map((pane) => pane.name));
-	return [
-		...activePanes,
-		...historicPanes.filter((pane) => !activeIds.has(pane.name)),
-	];
+	return [...activePanes, ...historicPanes.filter((pane) => !activeIds.has(pane.name))];
 }
 
 function fmt(value: unknown): string {
@@ -219,7 +216,10 @@ function AgentChat({ pane }: { pane: SubAgentPane }) {
 		bottomRef.current?.scrollIntoView({ behavior: "smooth" });
 	}, [pane.steps.length, pane.result]);
 
-	const sessionsStepCount = (pane.sessions ?? []).reduce((n, session) => n + session.steps.length, 0);
+	const sessionsStepCount = (pane.sessions ?? []).reduce(
+		(n, session) => n + session.steps.length,
+		0,
+	);
 	const hasUnsavedSteps = pane.steps.length > sessionsStepCount;
 	const activeSession: SubAgentSession | null =
 		hasUnsavedSteps || pane.status === "running"
@@ -293,6 +293,14 @@ export function AgentChatPage({ panes }: AgentChatPageProps) {
 
 	const cancelSelectedRun = useCallback(async (runId: string) => {
 		await fetch(`/api/runs/${runId}/cancel`, { method: "POST" });
+	}, []);
+
+	const pauseSelectedRun = useCallback(async (runId: string) => {
+		await fetch(`/api/runs/${runId}/pause`, { method: "POST" });
+	}, []);
+
+	const resumeSelectedRun = useCallback(async (runId: string) => {
+		await fetch(`/api/runs/${runId}/resume`, { method: "POST" });
 	}, []);
 
 	useEffect(() => {
@@ -376,7 +384,9 @@ export function AgentChatPage({ panes }: AgentChatPageProps) {
 					<span className={`${styles.chatHeaderDot} ${styles[activePane.status]}`} />
 					<span className={styles.chatHeaderName}>{activePane.displayName}</span>
 					{activePane.steps.length > 0 && (
-						<span className={styles.chatHeaderSteps}>{activePane.steps.length} шагов</span>
+						<span className={styles.chatHeaderSteps}>
+							{activePane.steps.length} шагов
+						</span>
 					)}
 					{activePane.model && (
 						<span className={styles.chatHeaderModel}>{activePane.model}</span>
@@ -386,14 +396,37 @@ export function AgentChatPage({ panes }: AgentChatPageProps) {
 							{activePane.contextTokens.toLocaleString()} tk
 						</span>
 					)}
-					{activePane.status === "running" && !activePane.id.startsWith("history:") && (
-						<button
-							className={styles.stopRunBtn}
-							onClick={() => void cancelSelectedRun(activePane.id)}
-							title="Остановить текущий запуск"
-						>
-							Остановить
-						</button>
+					{!activePane.id.startsWith("history:") && (
+						<>
+							{activePane.status === "running" && (
+								<button
+									className={styles.pauseRunBtn}
+									onClick={() => void pauseSelectedRun(activePane.id)}
+									title="Приостановить запуск"
+								>
+									Пауза
+								</button>
+							)}
+							{activePane.status === "paused" && (
+								<button
+									className={styles.resumeRunBtn}
+									onClick={() => void resumeSelectedRun(activePane.id)}
+									title="Продолжить запуск"
+								>
+									Продолжить
+								</button>
+							)}
+							{(activePane.status === "running" ||
+								activePane.status === "paused") && (
+								<button
+									className={styles.stopRunBtn}
+									onClick={() => void cancelSelectedRun(activePane.id)}
+									title="Остановить текущий запуск"
+								>
+									Остановить
+								</button>
+							)}
+						</>
 					)}
 				</div>
 

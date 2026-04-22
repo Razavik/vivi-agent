@@ -21,7 +21,7 @@ export interface ChatEvent {
 	plan?: PlanItem[];
 }
 
-export type SubAgentStatus = "idle" | "running" | "done" | "error" | "cancelled";
+export type SubAgentStatus = "idle" | "running" | "done" | "error" | "cancelled" | "paused";
 
 export interface SubAgentStep {
 	step: number;

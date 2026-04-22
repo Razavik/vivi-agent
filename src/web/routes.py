@@ -136,6 +136,18 @@ class Routes:
             return {"cancelled": True, "run_id": run_id}
         return {"cancelled": False, "run_id": run_id, "error": "Активный run не найден"}
 
+    def pause_run(self, run_id: str) -> dict[str, Any]:
+        paused = self.ctx.pause_run(run_id)
+        if paused:
+            return {"paused": True, "run_id": run_id}
+        return {"paused": False, "run_id": run_id, "error": "Активный run не найден"}
+
+    def resume_run(self, run_id: str) -> dict[str, Any]:
+        resumed = self.ctx.resume_run(run_id)
+        if resumed:
+            return {"resumed": True, "run_id": run_id}
+        return {"resumed": False, "run_id": run_id, "error": "Активный run не найден"}
+
     def confirm(self, request_id: str, approved: bool) -> dict[str, Any] | tuple[dict[str, Any], HTTPStatus]:
         found = self.confirmation.handle_confirm_request(request_id, approved)
         if not found:

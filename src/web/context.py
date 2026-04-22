@@ -70,7 +70,7 @@ class ServerContext:
     # --- Управление run controllers ---
 
     def create_run_controller(self, run_id: str, agent_name: str, task: str) -> RunController:
-        controller = RunController(run_id=run_id, cancel_event=Event())
+        controller = RunController(run_id=run_id, cancel_event=Event(), pause_event=Event())
         with self._lock:
             self._run_controllers[run_id] = controller
         self.run_registry.upsert(
@@ -92,6 +92,24 @@ class ServerContext:
             return False
         controller.cancel()
         self.run_registry.update(run_id, status="cancelling", updated_at=time.time())
+        return True
+
+    def pause_run(self, run_id: str) -> bool:
+        with self._lock:
+            controller = self._run_controllers.get(run_id)
+        if controller is None:
+            return False
+        controller.pause()
+        self.run_registry.update(run_id, status="paused", updated_at=time.time())
+        return True
+
+    def resume_run(self, run_id: str) -> bool:
+        with self._lock:
+            controller = self._run_controllers.get(run_id)
+        if controller is None:
+            return False
+        controller.resume()
+        self.run_registry.update(run_id, status="running", updated_at=time.time())
         return True
 
     def remove_run_controller(self, run_id: str) -> None:

@@ -150,6 +150,13 @@ class SubAgent:
             try:
                 if controller is not None and controller.is_cancelled():
                     raise AgentError(f"Агент {self.display_name} прерван по run_id={run_id}")
+                if controller is not None and controller.is_paused():
+                    self._emit(event_sink, "sub_agent_paused", {"agent": self.name, "run_id": run_id})
+                    while controller.is_paused() and not controller.is_cancelled():
+                        time.sleep(0.5)
+                    if controller.is_cancelled():
+                        raise AgentError(f"Агент {self.display_name} прерван по run_id={run_id}")
+                    self._emit(event_sink, "sub_agent_resumed", {"agent": self.name, "run_id": run_id})
                 messages = self._build_messages(system_prompt, state, registry, images=images if step_number == 1 else None)
                 from src.llm.prompt_builder import count_tokens
                 token_count = count_tokens(messages)

@@ -58,6 +58,18 @@ class AgentWebHandler(BaseHTTPRequestHandler):
                 self._send_json(routes.cancel_run(run_id.strip("/")))
             else:
                 self._send_json({"error": "run id missing"}, status=HTTPStatus.BAD_REQUEST)
+        elif self.path.startswith("/api/runs/") and self.path.endswith("/pause"):
+            run_id = self.path[len("/api/runs/"):-len("/pause")]
+            if run_id:
+                self._send_json(routes.pause_run(run_id.strip("/")))
+            else:
+                self._send_json({"error": "run id missing"}, status=HTTPStatus.BAD_REQUEST)
+        elif self.path.startswith("/api/runs/") and self.path.endswith("/resume"):
+            run_id = self.path[len("/api/runs/"):-len("/resume")]
+            if run_id:
+                self._send_json(routes.resume_run(run_id.strip("/")))
+            else:
+                self._send_json({"error": "run id missing"}, status=HTTPStatus.BAD_REQUEST)
         elif self.path == "/api/confirm":
             self._handle_confirm(routes)
         elif self.path == "/api/history/clear":

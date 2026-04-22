@@ -109,6 +109,10 @@
 .cardDot.cancelled {
 	background: rgba(255, 255, 255, 0.38);
 }
+.cardDot.paused {
+	background: var(--warn);
+	box-shadow: 0 0 4px var(--warn);
+}
 .cardDot.error {
 	background: var(--err);
 }
@@ -238,6 +242,10 @@
 .chatHeaderDot.cancelled {
 	background: rgba(255, 255, 255, 0.38);
 }
+.chatHeaderDot.paused {
+	background: var(--warn);
+	box-shadow: 0 0 4px var(--warn);
+}
 .chatHeaderDot.error {
 	background: var(--err);
 }
@@ -300,6 +308,38 @@
 .stopRunBtn:hover {
 	background: rgba(239, 68, 68, 0.14);
 	border-color: rgba(239, 68, 68, 0.42);
+}
+
+.pauseRunBtn {
+	font-size: 11px;
+	color: var(--warn);
+	background: rgba(246, 211, 101, 0.08);
+	border: 1px solid rgba(246, 211, 101, 0.22);
+	border-radius: 6px;
+	padding: 3px 10px;
+	cursor: pointer;
+	margin-left: 4px;
+}
+
+.pauseRunBtn:hover {
+	background: rgba(246, 211, 101, 0.14);
+	border-color: rgba(246, 211, 101, 0.42);
+}
+
+.resumeRunBtn {
+	font-size: 11px;
+	color: var(--ok);
+	background: rgba(51, 209, 122, 0.08);
+	border: 1px solid rgba(51, 209, 122, 0.22);
+	border-radius: 6px;
+	padding: 3px 10px;
+	cursor: pointer;
+	margin-left: 4px;
+}
+
+.resumeRunBtn:hover {
+	background: rgba(51, 209, 122, 0.14);
+	border-color: rgba(51, 209, 122, 0.42);
 }
 
 /* ── Пустой placeholder справа ── */

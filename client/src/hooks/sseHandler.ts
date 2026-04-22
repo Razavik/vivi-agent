@@ -138,7 +138,10 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 					};
 					return updated;
 				}
-				return [...prev, { type: "message", role: "assistant", content: `Ошибка: ${message}` }];
+				return [
+					...prev,
+					{ type: "message", role: "assistant", content: `Ошибка: ${message}` },
+				];
 			});
 			s.setLiveStatus("Произошла ошибка");
 			break;
@@ -340,6 +343,14 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 			);
 			break;
 		}
+
+		case "sub_agent_paused":
+			if (p?.run_id) s.updatePane(p.run_id, { status: "paused" });
+			break;
+
+		case "sub_agent_resumed":
+			if (p?.run_id) s.updatePane(p.run_id, { status: "running" });
+			break;
 
 		case "sub_agent_error":
 			if (p?.run_id) s.updatePane(p.run_id, { status: "error" });
