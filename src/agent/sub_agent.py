@@ -5,6 +5,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Callable
 
+from src.agent.run_control import RunController
 from src.agent.schemas import ActionStep
 from src.agent.state import ChatMessage, Observation, PlanItem, SessionState
 from src.infra.chat_memory import ChatMemoryStore
@@ -80,14 +81,13 @@ class SubAgent:
     def run(
         self,
         task: str,
+        run_id: str,
         event_sink: Callable[[str, object], None] | None = None,
         ask_director: Callable[[str], str] | None = None,
+        controller: RunController | None = None,
         images: list[str] | None = None,
     ) -> dict[str, Any]:
         """Запускает LLM-цикл сабагента и возвращает структурированный результат."""
-        registry = self._build_registry(ask_director)
-        validator = ActionValidator(registry)
-
         state = SessionState(user_goal=task)
 
         # Загружаем долгосрочную память агента
@@ -112,7 +112,34 @@ class SubAgent:
                     state.set_plan(plan_items)
 
         state.add_chat_message("user", task)
-        self._emit(event_sink, "sub_agent_started", {"agent": self.name, "task": task})
+        self._emit(event_sink, "sub_agent_started", {
+            "agent": self.name,
+            "run_id": run_id,
+            "task": task,
+            "model": self.client.model,
+        })
+
+        wrapped_ask_director: Callable[[str], str] | None = None
+        if ask_director is not None:
+            def _wrapped_ask_director(question: str) -> str:
+                self._emit(event_sink, "sub_agent_question", {
+                    "agent": self.name,
+                    "run_id": run_id,
+                    "question": question,
+                })
+                answer = ask_director(question)
+                self._emit(event_sink, "sub_agent_answer", {
+                    "agent": self.name,
+                    "run_id": run_id,
+                    "question": question,
+                    "answer": answer,
+                })
+                return answer
+
+            wrapped_ask_director = _wrapped_ask_director
+
+        registry = self._build_registry(wrapped_ask_director)
+        validator = ActionValidator(registry)
 
         system_prompt = self._load_prompt()
         system_prompt = system_prompt.replace("{user_name}", self.user_name)
@@ -121,10 +148,12 @@ class SubAgent:
 
         for step_number in range(1, self.max_steps + 1):
             try:
+                if controller is not None and controller.is_cancelled():
+                    raise AgentError(f"Агент {self.display_name} прерван по run_id={run_id}")
                 messages = self._build_messages(system_prompt, state, registry, images=images if step_number == 1 else None)
                 from src.llm.prompt_builder import count_tokens
                 token_count = count_tokens(messages)
-                self._emit(event_sink, "context_tokens", {"agent": self.name, "count": token_count})
+                self._emit(event_sink, "context_tokens", {"agent": self.name, "run_id": run_id, "count": token_count})
                 current_step = self.client.plan_next_step(messages)
                 if current_step.plan:
                     plan_items = [
@@ -134,11 +163,12 @@ class SubAgent:
                     state.set_plan(plan_items)
                     self._emit(event_sink, "sub_agent_plan_updated", {
                         "agent": self.name,
+                        "run_id": run_id,
                         "step": step_number,
                         "plan": state.compact_plan(),
                     })
                 self._emit(event_sink, "sub_agent_step", {
-                    "agent": self.name, "step": step_number, **asdict(current_step)
+                    "agent": self.name, "run_id": run_id, "step": step_number, **asdict(current_step)
                 })
 
                 # Защита от зацикливания: одно и то же действие с теми же аргументами 3 раза подряд
@@ -152,7 +182,7 @@ class SubAgent:
                         f"с одинаковыми аргументами. Используй другой инструмент или другие аргументы."
                     )
                     self._emit(event_sink, "sub_agent_error", {
-                        "agent": self.name, "step": step_number, "message": loop_msg
+                        "agent": self.name, "run_id": run_id, "step": step_number, "message": loop_msg
                     })
                     state.add_observation(Observation(
                         step=step_number,
@@ -163,21 +193,29 @@ class SubAgent:
                     last_actions.clear()
                     continue
 
-                result = self._execute_step(current_step, step_number, state, event_sink, validator)
+                result = self._execute_step(current_step, step_number, state, event_sink, validator, run_id)
 
                 if result is not None:
                     state.add_chat_message("assistant", result, plan=state.plan)
                     self.memory_store.append_session(state.chat_history, state.observations, self.client.model)
                     self._emit(event_sink, "sub_agent_finished", {
-                        "agent": self.name, "result": result, "success": True
+                        "agent": self.name, "run_id": run_id, "result": result, "success": True
                     })
-                    return {"success": True, "result": result, "steps": step_number}
+                    return {"run_id": run_id, "agent_name": self.name, "success": True, "result": result, "steps": step_number}
 
                 state.consecutive_errors = 0
             except AgentError as exc:
+                if controller is not None and controller.is_cancelled():
+                    cancelled_msg = f"Агент {self.display_name} прерван"
+                    state.add_chat_message("assistant", cancelled_msg, plan=state.plan)
+                    self.memory_store.append_session(state.chat_history, state.observations, self.client.model)
+                    self._emit(event_sink, "sub_agent_finished", {
+                        "agent": self.name, "run_id": run_id, "result": cancelled_msg, "success": False, "cancelled": True
+                    })
+                    return {"run_id": run_id, "agent_name": self.name, "success": False, "cancelled": True, "result": cancelled_msg, "steps": step_number}
                 state.consecutive_errors += 1
                 self._emit(event_sink, "sub_agent_error", {
-                    "agent": self.name, "step": step_number, "message": str(exc)
+                    "agent": self.name, "run_id": run_id, "step": step_number, "message": str(exc)
                 })
                 state.add_observation(Observation(
                     step=step_number,
@@ -190,17 +228,17 @@ class SubAgent:
                     state.add_chat_message("assistant", error_msg, plan=state.plan)
                     self.memory_store.append_session(state.chat_history, state.observations, self.client.model)
                     self._emit(event_sink, "sub_agent_finished", {
-                        "agent": self.name, "result": error_msg, "success": False
+                        "agent": self.name, "run_id": run_id, "result": error_msg, "success": False
                     })
-                    return {"success": False, "result": error_msg, "steps": step_number}
+                    return {"run_id": run_id, "agent_name": self.name, "success": False, "result": error_msg, "steps": step_number}
 
         # Лимит шагов
         limit_msg = f"Агент {self.display_name} достиг лимита шагов ({self.max_steps})"
         self.memory_store.append_session(state.chat_history, state.observations, self.client.model)
         self._emit(event_sink, "sub_agent_finished", {
-            "agent": self.name, "result": limit_msg, "success": False
+            "agent": self.name, "run_id": run_id, "result": limit_msg, "success": False
         })
-        return {"success": False, "result": limit_msg, "steps": self.max_steps}
+        return {"run_id": run_id, "agent_name": self.name, "success": False, "result": limit_msg, "steps": self.max_steps}
 
     def _build_messages(self, system_prompt: str, state: SessionState, registry: ToolRegistry, images: list[str] | None = None) -> list[dict[str, object]]:
         user_payload = {
@@ -229,6 +267,7 @@ class SubAgent:
         state: SessionState,
         event_sink: Callable[[str, object], None] | None,
         validator: ActionValidator,
+        run_id: str,
     ) -> str | None:
         tool = validator.validate(step)
         self.policy.enforce(step, tool)
@@ -237,7 +276,7 @@ class SubAgent:
         if step.summary and "summary" not in handler_args:
             handler_args["summary"] = step.summary
         if event_sink is not None:
-            handler_args["__event_sink__"] = lambda event, payload: self._emit(event_sink, event, {"agent": self.name, **payload})
+            handler_args["__event_sink__"] = lambda event, payload: self._emit(event_sink, event, {"agent": self.name, "run_id": run_id, **payload})
 
         try:
             result = tool.handler(handler_args)
@@ -251,7 +290,7 @@ class SubAgent:
             success=True, thought=step.thought
         )
         state.add_observation(observation)
-        self._emit(event_sink, "sub_agent_tool_result", {"agent": self.name, **asdict(observation)})
+        self._emit(event_sink, "sub_agent_tool_result", {"agent": self.name, "run_id": run_id, **asdict(observation)})
 
         if tool.name == "finish_task" or step.done:
             return str(result.get("summary") or step.summary or "Задача завершена")

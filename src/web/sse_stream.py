@@ -36,6 +36,7 @@ class SSEStream:
 
         def event_sink(event: str, data: object) -> None:
             payload = data if isinstance(data, dict) else {"value": data}
+            self.ctx.handle_run_event(event, payload)
             if event == "confirmation_requested":
                 payload = self.confirmation.create_request(payload)
             event_queue.put({"event": event, "payload": payload})
@@ -46,7 +47,11 @@ class SSEStream:
         def run_agent() -> None:
             try:
                 runtime, registry, _ = build_runtime(
-                    confirm_callback, logger, event_sink=event_sink, settings=self.ctx.settings
+                    confirm_callback,
+                    logger,
+                    event_sink=event_sink,
+                    create_run_controller=self.ctx.create_run_controller,
+                    settings=self.ctx.settings,
                 )
                 self.ctx.set_runtime(runtime)
                 summary = runtime.run(task, chat_history=chat_history, images=images or [])

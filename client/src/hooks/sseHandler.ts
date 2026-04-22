@@ -16,13 +16,11 @@ export interface SseSetters {
 	setConfirmationRequest: React.Dispatch<React.SetStateAction<ConfirmationRequest | null>>;
 	setContextTokens: React.Dispatch<React.SetStateAction<number>>;
 	setSubAgentPanes: React.Dispatch<React.SetStateAction<SubAgentPane[]>>;
-	updatePane: (name: string, patch: Partial<SubAgentPane>) => void;
+	updatePane: (id: string, patch: Partial<SubAgentPane>) => void;
 	getCurrentAnswer: () => string;
 	isSessionFinished: () => boolean;
 	setSessionFinished: (value: boolean) => void;
 }
-
-// --- Парсинг SSE-потока ---
 
 export interface ParseResult {
 	remaining: string;
@@ -47,7 +45,7 @@ export function parseSseBuffer(buffer: string): ParseResult {
 			try {
 				events.push(JSON.parse(data));
 			} catch {
-				// невалидный JSON — пропускаем
+				// ignore malformed event
 			}
 		}
 		idx = buffer.indexOf("\n\n");
@@ -55,11 +53,10 @@ export function parseSseBuffer(buffer: string): ParseResult {
 	return { remaining: buffer, events };
 }
 
-// --- Обработка одного SSE-события ---
-
 export function handleSseEvent(event: any, s: SseSetters): void {
 	const p = event.payload;
 	console.log("[SSE handler]", event.event);
+
 	switch (event.event) {
 		case "thought_stream":
 			if (s.isSessionFinished()) break;
@@ -88,11 +85,11 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 			s.setLiveStatus("Формируется ответ...");
 			break;
 
-		case "sub_agent_plan_updated": {
-			const { agent, plan } = p;
-			s.updatePane(agent, { plan: Array.isArray(plan) ? plan : [] });
+		case "sub_agent_plan_updated":
+			if (p?.run_id) {
+				s.updatePane(p.run_id, { plan: Array.isArray(p.plan) ? p.plan : [] });
+			}
 			break;
-		}
 
 		case "tool_result": {
 			const { action, result, success, step } = p;
@@ -102,8 +99,8 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 						(e) => e.type === "tool_use" && e.action === action && e.step === step,
 					);
 					if (i !== -1) {
-						const u = [...prev];
-						u[i] = {
+						const updated = [...prev];
+						updated[i] = {
 							type: "tool_result",
 							role: "assistant",
 							action,
@@ -111,7 +108,7 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 							success,
 							step,
 						};
-						return u;
+						return updated;
 					}
 					return [
 						...prev,
@@ -130,21 +127,18 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 			s.setEvents((prev) => {
 				const i = prev.findLastIndex((e) => e.type === "tool_use" && e.step === step);
 				if (i !== -1) {
-					const u = [...prev];
-					u[i] = {
+					const updated = [...prev];
+					updated[i] = {
 						type: "tool_result",
 						role: "assistant",
-						action: u[i].action!,
+						action: updated[i].action!,
 						result: { error: message },
 						success: false,
 						step,
 					};
-					return u;
+					return updated;
 				}
-				return [
-					...prev,
-					{ type: "message", role: "assistant", content: `Ошибка: ${message}` },
-				];
+				return [...prev, { type: "message", role: "assistant", content: `Ошибка: ${message}` }];
 			});
 			s.setLiveStatus("Произошла ошибка");
 			break;
@@ -216,52 +210,44 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 			break;
 
 		case "context_tokens":
-			if (p?.agent) {
-				s.updatePane(p.agent, { contextTokens: p.count || 0 });
+			if (p?.run_id) {
+				s.updatePane(p.run_id, { contextTokens: p.count || 0 });
 			} else {
 				s.setContextTokens(p?.count || 0);
 			}
 			break;
 
 		case "sub_agent_started": {
-			const { agent, task: t, model: m } = p;
+			const { agent, run_id, task, model } = p;
+			if (!run_id) break;
 			s.setSubAgentPanes((prev) => {
-				const exists = prev.find((x) => x.name === agent);
-				if (exists) {
-					return prev.map((x) => {
-						if (x.name !== agent) return x;
-						// Сохраняем текущую сессию в историю
-						const prevSessions = x.sessions ?? [];
-						const currentSession = {
-							task: x.task,
-							model: x.model || "",
-							steps: x.steps,
-							plan: x.plan ?? [],
-							result: x.result,
-						};
-						const hasContent = x.steps.length > 0 || x.result || x.task;
-						return {
-							...x,
-							task: t,
-							model: m || x.model,
-							status: "running",
-							steps: [],
-							plan: [],
-							result: undefined,
-							question: undefined,
-							answer: undefined,
-							startedAt: Date.now(),
-							sessions: hasContent ? [...prevSessions, currentSession] : prevSessions,
-						};
-					});
+				const existing = prev.find((pane) => pane.id === run_id);
+				if (existing) {
+					return prev.map((pane) =>
+						pane.id === run_id
+							? {
+									...pane,
+									task,
+									model: model || pane.model,
+									status: "running",
+									steps: [],
+									plan: [],
+									result: undefined,
+									question: undefined,
+									answer: undefined,
+									startedAt: Date.now(),
+								}
+							: pane,
+					);
 				}
 				return [
 					...prev,
 					{
+						id: run_id,
 						name: agent,
 						displayName: AGENT_DISPLAY_NAMES[agent] || agent,
-						task: t,
-						model: m || "",
+						task,
+						model: model || "",
 						status: "running",
 						steps: [],
 						plan: [],
@@ -274,78 +260,81 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 		}
 
 		case "sub_agent_step": {
-			const { agent, step, thought, action, args } = p;
+			const { run_id, step, thought, action, args } = p;
+			if (!run_id) break;
 			s.setSubAgentPanes((prev) =>
-				prev.map((x) => {
-					if (x.name !== agent) return x;
-					const i = x.steps.findIndex((s) => s.step === step);
-					const newSteps =
+				prev.map((pane) => {
+					if (pane.id !== run_id) return pane;
+					const i = pane.steps.findIndex((item) => item.step === step);
+					const steps =
 						i !== -1
-							? x.steps.map((s, idx) =>
-									idx === i ? { ...s, thought, action, args } : s,
+							? pane.steps.map((item, idx) =>
+									idx === i ? { ...item, thought, action, args } : item,
 								)
-							: [...x.steps, { step, thought, action, args }];
-					return { ...x, steps: newSteps };
+							: [...pane.steps, { step, thought, action, args }];
+					return { ...pane, steps };
 				}),
 			);
 			break;
 		}
 
 		case "powershell_output": {
-			const { agent: a, line, stream } = p;
-			if (stream !== "stdout") break;
+			const { run_id, line, stream } = p;
+			if (!run_id || stream !== "stdout") break;
 			s.setSubAgentPanes((prev) =>
-				prev.map((x) => {
-					if (x.name !== a) return x;
-					const steps = [...x.steps];
+				prev.map((pane) => {
+					if (pane.id !== run_id) return pane;
+					const steps = [...pane.steps];
 					const last = steps.length - 1;
-					if (last < 0) return x;
+					if (last < 0) return pane;
 					steps[last] = {
 						...steps[last],
 						streamLines: [...(steps[last].streamLines ?? []), line],
 					};
-					return { ...x, steps };
+					return { ...pane, steps };
 				}),
 			);
 			break;
 		}
 
 		case "sub_agent_tool_result": {
-			const { agent: a, step, action: act, result: res, success } = p;
+			const { run_id, step, action, result, success } = p;
+			if (!run_id) break;
 			s.setSubAgentPanes((prev) =>
-				prev.map((x) => {
-					if (x.name !== a) return x;
-					const i = x.steps.findIndex((s) => s.step === step && s.action === act);
-					if (i === -1) return x;
-					const newSteps = x.steps.map((s, idx) =>
-						idx === i ? { ...s, result: res, success } : s,
+				prev.map((pane) => {
+					if (pane.id !== run_id) return pane;
+					const i = pane.steps.findIndex(
+						(item) => item.step === step && item.action === action,
 					);
-					return { ...x, steps: newSteps };
+					if (i === -1) return pane;
+					const steps = pane.steps.map((item, idx) =>
+						idx === i ? { ...item, result, success } : item,
+					);
+					return { ...pane, steps };
 				}),
 			);
 			break;
 		}
 
 		case "sub_agent_finished": {
-			const { agent, result: r, success } = p;
-			const resultStr = String(r ?? "");
+			const { run_id, result, success, cancelled } = p;
+			if (!run_id) break;
+			const resultStr = String(result ?? "");
 			s.setSubAgentPanes((prev) =>
-				prev.map((x) => {
-					if (x.name !== agent) return x;
-					// Добавляем завершённую активную сессию в историю
+				prev.map((pane) => {
+					if (pane.id !== run_id) return pane;
 					const finishedSession = {
-						task: x.task,
-						model: x.model || "",
-						steps: x.steps,
-						plan: x.plan ?? [],
+						task: pane.task,
+						model: pane.model || "",
+						steps: pane.steps,
+						plan: pane.plan ?? [],
 						result: resultStr,
 					};
-					const sessions = [...(x.sessions ?? []), finishedSession];
 					return {
-						...x,
-						status: success ? "done" : "error",
+						...pane,
+						status: cancelled ? "cancelled" : success ? "done" : "error",
 						result: resultStr,
-						sessions,
+						sessions: [...(pane.sessions ?? []), finishedSession],
 					};
 				}),
 			);
@@ -353,28 +342,15 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 		}
 
 		case "sub_agent_error":
-			s.updatePane(p?.agent ?? "", { status: "error" });
+			if (p?.run_id) s.updatePane(p.run_id, { status: "error" });
 			break;
 
-		case "sub_agent_question": {
-			const { question } = p;
-			s.setSubAgentPanes((prev) => {
-				const ri = [...prev].reverse().findIndex((x) => x.status === "running");
-				if (ri === -1) return prev;
-				const i = prev.length - 1 - ri;
-				const u = [...prev];
-				u[i] = { ...u[i], question };
-				return u;
-			});
+		case "sub_agent_question":
+			if (p?.run_id) s.updatePane(p.run_id, { question: p.question });
 			break;
-		}
 
-		case "sub_agent_answer": {
-			const { question, answer } = p;
-			s.setSubAgentPanes((prev) =>
-				prev.map((x) => (x.question === question ? { ...x, answer } : x)),
-			);
+		case "sub_agent_answer":
+			if (p?.run_id) s.updatePane(p.run_id, { answer: p.answer });
 			break;
-		}
 	}
 }

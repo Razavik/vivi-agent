@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from http import HTTPStatus
-from pathlib import Path
 from typing import Any
 
 from src.app_factory import describe_all_tools
@@ -52,6 +51,7 @@ class Routes:
                 agent_name = f.stem.replace("-memory", "")
                 try:
                     import json as _json
+
                     data = _json.loads(f.read_text(encoding="utf-8"))
                     chat_history = data.get("chat_history", [])
                     updated_at = data.get("updated_at")
@@ -71,6 +71,7 @@ class Routes:
         if not f.exists():
             return {"cleared": False, "error": "Файл не найден"}
         from src.infra.chat_memory import ChatMemoryStore
+
         ChatMemoryStore(f).clear()
         return {"cleared": True, "agent": agent_name}
 
@@ -79,6 +80,7 @@ class Routes:
         cleared: list[str] = []
         if memory_dir.exists():
             from src.infra.chat_memory import ChatMemoryStore
+
             for f in memory_dir.glob("*-memory.json"):
                 ChatMemoryStore(f).clear()
                 cleared.append(f.stem.replace("-memory", ""))
@@ -90,6 +92,9 @@ class Routes:
             "chat_history": memory.get("chat_history", []),
             "actions": memory.get("actions", []),
         }
+
+    def get_active_runs(self) -> dict[str, Any]:
+        return {"runs": self.ctx.get_active_runs()}
 
     def clear_history(self) -> dict[str, Any]:
         self.ctx.memory_store.clear()
@@ -109,6 +114,7 @@ class Routes:
 
     def open_path(self, body: dict[str, Any]) -> dict[str, Any]:
         import subprocess
+
         path = str(body.get("path", "")).strip()
         if not path:
             return {"ok": False, "error": "path is empty"}
@@ -124,11 +130,23 @@ class Routes:
             return {"cancelled": True}
         return {"cancelled": False, "error": "Нет активной задачи"}
 
+    def cancel_run(self, run_id: str) -> dict[str, Any]:
+        cancelled = self.ctx.cancel_run(run_id)
+        if cancelled:
+            return {"cancelled": True, "run_id": run_id}
+        return {"cancelled": False, "run_id": run_id, "error": "Активный run не найден"}
+
     def confirm(self, request_id: str, approved: bool) -> dict[str, Any] | tuple[dict[str, Any], HTTPStatus]:
         found = self.confirmation.handle_confirm_request(request_id, approved)
         if not found:
             return {"error": "Подтверждение не найдено или уже не актуально"}, HTTPStatus.CONFLICT
         return {"ok": True, "request_id": request_id, "approved": approved}
 
-    def run_task(self, task: str, chat_history: list[dict[str, str]], write_callback, images: list[str] | None = None) -> dict[str, Any]:
+    def run_task(
+        self,
+        task: str,
+        chat_history: list[dict[str, str]],
+        write_callback,
+        images: list[str] | None = None,
+    ) -> dict[str, Any]:
         return self.sse.run_and_stream(task, chat_history, write_callback, images=images)

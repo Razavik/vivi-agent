@@ -19,7 +19,7 @@ export function AgentsSidebar({ panes }: AgentsSidebarProps) {
 					</div>
 				) : (
 					panes.map((pane) => (
-						<AgentPanel key={pane.name} pane={pane} />
+						<AgentPanel key={pane.id} pane={pane} />
 					))
 				)}
 			</div>

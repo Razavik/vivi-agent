@@ -71,6 +71,11 @@ async def _handle_connection(ws: ServerConnection, routes: Routes) -> None:
         result = routes.cancel()
         await ws.send(json.dumps(result, ensure_ascii=False))
 
+    elif action == "cancel_run":
+        run_id = str(msg.get("run_id", "")).strip()
+        result = routes.cancel_run(run_id)
+        await ws.send(json.dumps(result, ensure_ascii=False))
+
     elif action == "confirm":
         request_id = msg.get("request_id", "")
         approved = msg.get("approved", False)

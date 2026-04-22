@@ -184,7 +184,7 @@ function App() {
 						}
 					/>
 					<Route
-						path="/agents/:agentName"
+						path="/agents/:paneId"
 						element={
 							<section className="page-shell">
 								<AgentChatPage panes={subAgentPanes} />

@@ -16,9 +16,9 @@ export function useAgent() {
 	const [liveThought, setLiveThought] = useState("");
 	const sessionFinishedRef = useRef(false);
 
-	const updatePane = useCallback((name: string, patch: Partial<SubAgentPane>) => {
+	const updatePane = useCallback((id: string, patch: Partial<SubAgentPane>) => {
 		setSubAgentPanes((prev) => {
-			const idx = prev.findIndex((p) => p.name === name);
+			const idx = prev.findIndex((p) => p.id === id);
 			if (idx === -1) return prev;
 			const updated = [...prev];
 			updated[idx] = { ...updated[idx], ...patch };

@@ -137,8 +137,6 @@ def _make_ask_director_callback(
     )
 
     def ask_director(question: str) -> str:
-        if event_sink:
-            event_sink("sub_agent_question", {"question": question})
         messages = [
             {"role": "system", "content": director_system},
             {"role": "user", "content": question},
@@ -147,8 +145,6 @@ def _make_ask_director_callback(
             answer = llm_client.chat(messages)
         except Exception as exc:
             answer = f"Директор не смог ответить: {exc}"
-        if event_sink:
-            event_sink("sub_agent_answer", {"question": question, "answer": answer})
         return answer
 
     return ask_director
@@ -324,6 +320,7 @@ def build_runtime(
     confirm: Callable[[str], bool],
     logger: SessionLogger,
     event_sink: Callable[[str, object], None] | None = None,
+    create_run_controller: Callable[[str, str, str], object] | None = None,
     settings: Settings | None = None,
 ) -> tuple[AgentRuntime, ToolRegistry, Settings]:
     settings = settings or get_settings()
@@ -346,6 +343,7 @@ def build_runtime(
         agent_registry,
         event_sink=event_sink,
         ask_director_callback=ask_director_callback,
+        create_run_controller=create_run_controller,
     )
     director_registry = build_director_registry(delegate_tools)
 

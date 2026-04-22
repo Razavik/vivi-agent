@@ -106,6 +106,9 @@
 .cardDot.done {
 	background: var(--ok);
 }
+.cardDot.cancelled {
+	background: rgba(255, 255, 255, 0.38);
+}
 .cardDot.error {
 	background: var(--err);
 }
@@ -232,6 +235,9 @@
 .chatHeaderDot.done {
 	background: var(--ok);
 }
+.chatHeaderDot.cancelled {
+	background: rgba(255, 255, 255, 0.38);
+}
 .chatHeaderDot.error {
 	background: var(--err);
 }
@@ -278,6 +284,22 @@
 	border-radius: 6px;
 	background: rgba(255, 255, 255, 0.04);
 	border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.stopRunBtn {
+	font-size: 11px;
+	color: var(--err);
+	background: rgba(239, 68, 68, 0.08);
+	border: 1px solid rgba(239, 68, 68, 0.28);
+	border-radius: 6px;
+	padding: 4px 10px;
+	cursor: pointer;
+	margin-left: 4px;
+}
+
+.stopRunBtn:hover {
+	background: rgba(239, 68, 68, 0.14);
+	border-color: rgba(239, 68, 68, 0.42);
 }
 
 /* ── Пустой placeholder справа ── */

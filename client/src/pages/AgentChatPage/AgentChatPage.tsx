@@ -16,13 +16,6 @@ const AGENT_DISPLAY_NAMES: Record<string, string> = {
 	web: "Веб-агент",
 };
 
-const ALL_AGENTS: Pick<SubAgentPane, "name" | "displayName">[] = [
-	{ name: "file", displayName: AGENT_DISPLAY_NAMES.file },
-	{ name: "system", displayName: AGENT_DISPLAY_NAMES.system },
-	{ name: "telegram", displayName: AGENT_DISPLAY_NAMES.telegram },
-	{ name: "web", displayName: AGENT_DISPLAY_NAMES.web },
-];
-
 function historyToPane(name: string, displayName: string, chatHistory: any[]): SubAgentPane {
 	const sessions: SubAgentSession[] = [];
 	let pendingTask = "";
@@ -35,14 +28,14 @@ function historyToPane(name: string, displayName: string, chatHistory: any[]): S
 			const steps: SubAgentStep[] = [];
 			const plan: PlanItem[] = Array.isArray(msg.plan) ? msg.plan : [];
 			if (Array.isArray(msg.actions)) {
-				for (const a of msg.actions) {
+				for (const action of msg.actions) {
 					steps.push({
-						step: a.step ?? steps.length + 1,
-						thought: a.thought,
-						action: a.action,
-						args: a.args,
-						result: a.result,
-						success: a.success,
+						step: action.step ?? steps.length + 1,
+						thought: action.thought,
+						action: action.action,
+						args: action.args,
+						result: action.result,
+						success: action.success,
 					});
 				}
 			}
@@ -59,6 +52,7 @@ function historyToPane(name: string, displayName: string, chatHistory: any[]): S
 
 	if (sessions.length === 0) {
 		return {
+			id: `history:${name}`,
 			name,
 			displayName,
 			task: "",
@@ -70,9 +64,10 @@ function historyToPane(name: string, displayName: string, chatHistory: any[]): S
 	}
 
 	const lastSession = sessions[sessions.length - 1];
-	const allSteps = sessions.flatMap((s) => s.steps);
+	const allSteps = sessions.flatMap((session) => session.steps);
 
 	return {
+		id: `history:${name}`,
 		name,
 		displayName,
 		task: sessions[0]?.task ?? "",
@@ -87,21 +82,11 @@ function historyToPane(name: string, displayName: string, chatHistory: any[]): S
 }
 
 function buildPaneList(activePanes: SubAgentPane[], historicPanes: SubAgentPane[]): SubAgentPane[] {
-	return ALL_AGENTS.map((agent) => {
-		const active = activePanes.find((p) => p.name === agent.name);
-		if (active) return active;
-		const historic = historicPanes.find((p) => p.name === agent.name);
-		return (
-			historic ?? {
-				name: agent.name,
-				displayName: agent.displayName,
-				task: "",
-				status: "idle",
-				steps: [],
-				startedAt: 0,
-			}
-		);
-	});
+	const activeIds = new Set(activePanes.map((pane) => pane.name));
+	return [
+		...activePanes,
+		...historicPanes.filter((pane) => !activeIds.has(pane.name)),
+	];
 }
 
 function fmt(value: unknown): string {
@@ -114,34 +99,34 @@ function fmt(value: unknown): string {
 	}
 }
 
-function StepBlock({ s }: { s: SubAgentStep }) {
-	const hasResult = s.result !== undefined;
-	const st = hasResult ? (s.success ? "success" : "fail") : "pending";
-	const argsStr = s.args ? fmt(s.args) : "";
-	const resultStr = hasResult ? fmt(s.result) : "";
+function StepBlock({ step }: { step: SubAgentStep }) {
+	const hasResult = step.result !== undefined;
+	const st = hasResult ? (step.success ? "success" : "fail") : "pending";
+	const argsStr = step.args ? fmt(step.args) : "";
+	const resultStr = hasResult ? fmt(step.result) : "";
 
 	return (
 		<div className={`${styles.stepBlock} ${styles[st]}`}>
 			<div className={styles.stepHeader}>
-				<span className={styles.stepNum}>#{s.step}</span>
-				{s.action && (
-					<span className={`${styles.stepAction} ${styles[st]}`}>{s.action}</span>
+				<span className={styles.stepNum}>#{step.step}</span>
+				{step.action && (
+					<span className={`${styles.stepAction} ${styles[st]}`}>{step.action}</span>
 				)}
 				{hasResult && (
 					<span className={`${styles.stepBadge} ${styles[st]}`}>
-						{s.success ? "ok" : "fail"}
+						{step.success ? "ok" : "fail"}
 					</span>
 				)}
 			</div>
-			{s.thought && <div className={styles.stepThought}>{s.thought}</div>}
+			{step.thought && <div className={styles.stepThought}>{step.thought}</div>}
 			{argsStr && !hasResult && (
 				<div className={styles.stepArgs}>
 					<pre className={styles.stepArgsPre}>{argsStr}</pre>
 				</div>
 			)}
-			{s.streamLines && s.streamLines.length > 0 && (
+			{step.streamLines && step.streamLines.length > 0 && (
 				<div className={styles.stepStream}>
-					<pre className={styles.stepStreamPre}>{s.streamLines.join("\n")}</pre>
+					<pre className={styles.stepStreamPre}>{step.streamLines.join("\n")}</pre>
 				</div>
 			)}
 			{hasResult && resultStr && (
@@ -161,7 +146,7 @@ const PLAN_ICONS: Record<string, string> = {
 
 function PlanBlock({ plan }: { plan: PlanItem[] }) {
 	if (!plan.length) return null;
-	const done = plan.filter((i) => i.status === "completed").length;
+	const done = plan.filter((item) => item.status === "completed").length;
 	return (
 		<div className={styles.planBlock}>
 			<div className={styles.planHeader}>
@@ -214,8 +199,8 @@ function SessionBlock({
 				</div>
 			</div>
 			<PlanBlock plan={session.plan ?? []} />
-			{session.steps.map((s, i) => (
-				<StepBlock key={i} s={s} />
+			{session.steps.map((step, i) => (
+				<StepBlock key={i} step={step} />
 			))}
 			{session.result && (
 				<div className={`${styles.resultBanner} ${styles.success}`}>
@@ -234,15 +219,13 @@ function AgentChat({ pane }: { pane: SubAgentPane }) {
 		bottomRef.current?.scrollIntoView({ behavior: "smooth" });
 	}, [pane.steps.length, pane.result]);
 
-	// Текущая активная сессия — показываем если есть незавершённые шаги вне sessions
-	const sessionsStepCount = (pane.sessions ?? []).reduce((n, s) => n + s.steps.length, 0);
+	const sessionsStepCount = (pane.sessions ?? []).reduce((n, session) => n + session.steps.length, 0);
 	const hasUnsavedSteps = pane.steps.length > sessionsStepCount;
 	const activeSession: SubAgentSession | null =
 		hasUnsavedSteps || pane.status === "running"
 			? { task: pane.task, model: pane.model || "", steps: pane.steps, plan: pane.plan ?? [] }
 			: null;
 
-	// Все сессии: история + активная (если есть)
 	const allSessions: SubAgentSession[] = [
 		...(pane.sessions ?? []),
 		...(activeSession ? [activeSession] : []),
@@ -274,7 +257,7 @@ function AgentChat({ pane }: { pane: SubAgentPane }) {
 }
 
 export function AgentChatPage({ panes }: AgentChatPageProps) {
-	const { agentName } = useParams<{ agentName: string }>();
+	const { paneId } = useParams<{ paneId: string }>();
 	const navigate = useNavigate();
 	const [historicPanes, setHistoricPanes] = useState<SubAgentPane[]>([]);
 
@@ -282,11 +265,17 @@ export function AgentChatPage({ panes }: AgentChatPageProps) {
 		try {
 			const res = await fetch("/api/agents/history");
 			const data = await res.json();
-			const loaded: SubAgentPane[] = (data.agents ?? []).map((a: any) =>
-				historyToPane(a.name, AGENT_DISPLAY_NAMES[a.name] ?? a.name, a.chat_history ?? []),
+			const loaded: SubAgentPane[] = (data.agents ?? []).map((agent: any) =>
+				historyToPane(
+					agent.name,
+					AGENT_DISPLAY_NAMES[agent.name] ?? agent.name,
+					agent.chat_history ?? [],
+				),
 			);
 			setHistoricPanes(loaded);
-		} catch {}
+		} catch {
+			// ignore history load errors
+		}
 	}, []);
 
 	const clearAgent = useCallback(
@@ -302,31 +291,38 @@ export function AgentChatPage({ panes }: AgentChatPageProps) {
 		await loadHistory();
 	}, [loadHistory]);
 
+	const cancelSelectedRun = useCallback(async (runId: string) => {
+		await fetch(`/api/runs/${runId}/cancel`, { method: "POST" });
+	}, []);
+
 	useEffect(() => {
 		void loadHistory();
 	}, [loadHistory]);
 
 	useEffect(() => {
-		const hasDone = panes.some((p) => p.status === "done" || p.status === "error");
+		const hasDone = panes.some((pane) => pane.status === "done" || pane.status === "error");
 		if (hasDone) void loadHistory();
 	}, [panes, loadHistory]);
 
 	const allPanes = buildPaneList(panes, historicPanes);
-
-	const selected =
-		agentName && allPanes.find((p) => p.name === agentName) ? agentName : allPanes[0].name;
+	const selectedId =
+		paneId && allPanes.find((pane) => pane.id === paneId) ? paneId : allPanes[0]?.id;
 
 	useEffect(() => {
-		if (!agentName || !allPanes.find((p) => p.name === agentName)) {
-			navigate(`/agents/${allPanes[0].name}`, { replace: true });
+		if (!allPanes.length) return;
+		if (!paneId || !allPanes.find((pane) => pane.id === paneId)) {
+			navigate(`/agents/${allPanes[0].id}`, { replace: true });
 		}
-	}, [agentName, allPanes, navigate]);
+	}, [paneId, allPanes, navigate]);
 
-	const activePane = allPanes.find((p) => p.name === selected) ?? allPanes[0];
+	if (!allPanes.length) {
+		return <div className={styles.chatEmpty}>Нет данных по агентам</div>;
+	}
+
+	const activePane = allPanes.find((pane) => pane.id === selectedId) ?? allPanes[0];
 
 	return (
 		<div className={styles.page}>
-			{/* ── Левая панель — список агентов ── */}
 			<aside className={styles.sidebar}>
 				<div className={styles.sidebarHeader}>
 					<span>Агенты</span>
@@ -341,9 +337,9 @@ export function AgentChatPage({ panes }: AgentChatPageProps) {
 				<div className={styles.agentList}>
 					{allPanes.map((pane) => (
 						<div
-							key={pane.name}
-							className={`${styles.agentCard} ${agentName === pane.name ? styles.selected : ""}`}
-							onClick={() => navigate(`/agents/${pane.name}`)}
+							key={pane.id}
+							className={`${styles.agentCard} ${selectedId === pane.id ? styles.selected : ""}`}
+							onClick={() => navigate(`/agents/${pane.id}`)}
 						>
 							<span className={`${styles.cardDot} ${styles[pane.status]}`} />
 							<div className={styles.cardInfo}>
@@ -356,33 +352,31 @@ export function AgentChatPage({ panes }: AgentChatPageProps) {
 								{pane.steps.length > 0 && (
 									<span className={styles.cardSteps}>{pane.steps.length}</span>
 								)}
-								{(pane.status === "done" || pane.status === "error") && (
-									<button
-										className={styles.clearCardBtn}
-										title="Очистить память агента"
-										onClick={(e) => {
-											e.stopPropagation();
-											void clearAgent(pane.name);
-										}}
-									>
-										✕
-									</button>
-								)}
+								{pane.id.startsWith("history:") &&
+									(pane.status === "done" || pane.status === "error") && (
+										<button
+											className={styles.clearCardBtn}
+											title="Очистить память агента"
+											onClick={(e) => {
+												e.stopPropagation();
+												void clearAgent(pane.name);
+											}}
+										>
+											✕
+										</button>
+									)}
 							</div>
 						</div>
 					))}
 				</div>
 			</aside>
 
-			{/* ── Правая панель — чат ── */}
 			<div className={styles.chatArea}>
 				<div className={styles.chatHeader}>
 					<span className={`${styles.chatHeaderDot} ${styles[activePane.status]}`} />
 					<span className={styles.chatHeaderName}>{activePane.displayName}</span>
 					{activePane.steps.length > 0 && (
-						<span className={styles.chatHeaderSteps}>
-							{activePane.steps.length} шагов
-						</span>
+						<span className={styles.chatHeaderSteps}>{activePane.steps.length} шагов</span>
 					)}
 					{activePane.model && (
 						<span className={styles.chatHeaderModel}>{activePane.model}</span>
@@ -392,14 +386,23 @@ export function AgentChatPage({ panes }: AgentChatPageProps) {
 							{activePane.contextTokens.toLocaleString()} tk
 						</span>
 					)}
+					{activePane.status === "running" && !activePane.id.startsWith("history:") && (
+						<button
+							className={styles.stopRunBtn}
+							onClick={() => void cancelSelectedRun(activePane.id)}
+							title="Остановить текущий запуск"
+						>
+							Остановить
+						</button>
+					)}
 				</div>
 
 				{activePane.status === "idle" ? (
 					<div className={styles.chatEmpty}>
-						<div className={styles.chatEmptyIcon}>◎</div>
+						<div className={styles.chatEmptyIcon}>◍</div>
 						<div>Агент ещё не запускался</div>
 						<div style={{ fontSize: 12, opacity: 0.6 }}>
-							Дай директору задачу — здесь появится лог
+							Дай директору задачу, и здесь появится лог
 						</div>
 					</div>
 				) : (
