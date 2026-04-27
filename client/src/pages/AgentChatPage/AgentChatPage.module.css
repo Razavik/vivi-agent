@@ -3,12 +3,13 @@
 	display: flex;
 	height: 100%;
 	overflow: hidden;
+	background: var(--bg-main);
 }
 
 /* ── Левая панель — список агентов ── */
 .sidebar {
-	width: 260px;
-	min-width: 260px;
+	width: 220px;
+	min-width: 220px;
 	border-right: 1px solid var(--border);
 	display: flex;
 	flex-direction: column;
@@ -17,11 +18,11 @@
 }
 
 .sidebarHeader {
-	padding: 12px 16px 10px;
-	font-size: 11px;
-	font-weight: 600;
+	padding: 10px 14px 9px;
+	font-size: 10px;
+	font-weight: 700;
 	color: var(--text-muted);
-	letter-spacing: 0.08em;
+	letter-spacing: 0.1em;
 	text-transform: uppercase;
 	border-bottom: 1px solid var(--border);
 	flex-shrink: 0;
@@ -35,89 +36,85 @@
 	color: var(--text-muted);
 	background: transparent;
 	border: 1px solid var(--border);
-	border-radius: 5px;
+	border-radius: var(--radius-sm);
 	padding: 2px 7px;
 	cursor: pointer;
 	transition:
-		color 0.15s,
-		border-color 0.15s;
+		color 0.12s,
+		border-color 0.12s;
 	text-transform: none;
 	letter-spacing: 0;
 }
 
 .clearAllBtn:hover {
 	color: var(--err);
-	border-color: var(--err);
+	border-color: rgba(224, 82, 82, 0.4);
 }
 
 .agentList {
 	flex: 1;
 	overflow-y: auto;
-	padding: 8px;
+	padding: 6px;
 	display: flex;
 	flex-direction: column;
-	gap: 4px;
-}
-
-.agentList::-webkit-scrollbar {
-	width: 4px;
-}
-.agentList::-webkit-scrollbar-thumb {
-	background: var(--border);
-	border-radius: 2px;
+	gap: 1px;
 }
 
 .agentCard {
 	display: flex;
 	align-items: center;
-	gap: 10px;
-	padding: 10px 12px;
-	border-radius: 8px;
+	gap: 9px;
+	padding: 8px 10px;
+	border-radius: var(--radius-md);
 	cursor: pointer;
 	border: 1px solid transparent;
-	transition: all 0.15s;
+	transition:
+		background 0.1s,
+		border-color 0.1s;
 	background: transparent;
 	text-align: left;
 	width: 100%;
 }
 
 .agentCard:hover {
-	background: rgba(255, 255, 255, 0.04);
-	border-color: var(--border);
+	background: var(--bg-hover);
 }
 
 .agentCard.selected {
-	background: rgba(16, 163, 127, 0.1);
-	border-color: rgba(16, 163, 127, 0.3);
+	background: var(--accent-dim);
+	border-color: rgba(14, 164, 127, 0.2);
 }
 
 .cardDot {
-	width: 8px;
-	height: 8px;
+	width: 6px;
+	height: 6px;
 	border-radius: 50%;
 	flex-shrink: 0;
 }
 
 .cardDot.running {
 	background: var(--accent);
-	box-shadow: 0 0 6px var(--accent);
-	animation: pulse 1.4s ease-in-out infinite;
+	box-shadow: 0 0 5px var(--accent);
+	animation: pulse 1.6s ease-in-out infinite;
 }
 .cardDot.done {
 	background: var(--ok);
 }
 .cardDot.cancelled {
-	background: rgba(255, 255, 255, 0.38);
+	background: var(--text-muted);
 }
 .cardDot.paused {
 	background: var(--warn);
-	box-shadow: 0 0 4px var(--warn);
+}
+.cardDot.interrupted {
+	background: #e8863a;
 }
 .cardDot.error {
 	background: var(--err);
 }
 .cardDot.idle {
-	background: rgba(255, 255, 255, 0.2);
+	background: var(--text-muted);
+	opacity: 0.4;
 }
 
 @keyframes pulse {
@@ -126,7 +123,7 @@
 		opacity: 1;
 	}
 	50% {
-		opacity: 0.3;
+		opacity: 0.2;
 	}
 }
 
@@ -136,10 +133,10 @@
 }
 
 .cardName {
-	font-size: 13px;
+	font-size: 12px;
 	font-weight: 600;
 	color: var(--text-main);
-	margin-bottom: 2px;
+	margin-bottom: 1px;
 }
 
 .cardTask {
@@ -160,29 +157,29 @@
 .cardSteps {
 	font-size: 10px;
 	color: var(--text-muted);
-	background: rgba(255, 255, 255, 0.06);
-	padding: 1px 6px;
-	border-radius: 8px;
+	background: rgba(255, 255, 255, 0.05);
+	padding: 1px 5px;
+	border-radius: 4px;
 	flex-shrink: 0;
+	font-family: var(--font-mono);
 }
 
 .clearCardBtn {
 	font-size: 10px;
-	width: 18px;
-	height: 18px;
+	width: 16px;
+	height: 16px;
 	display: flex;
 	align-items: center;
 	justify-content: center;
 	background: transparent;
-	border: 1px solid transparent;
-	border-radius: 4px;
+	border: none;
+	border-radius: var(--radius-sm);
 	cursor: pointer;
 	color: var(--text-muted);
 	opacity: 0;
 	transition:
-		opacity 0.15s,
-		color 0.15s,
-		border-color 0.15s;
+		opacity 0.12s,
+		color 0.12s;
 }
 
 .agentCard:hover .clearCardBtn {
@@ -191,8 +188,7 @@
 
 .clearCardBtn:hover {
 	color: var(--err);
-	border-color: rgba(239, 68, 68, 0.4);
-	background: rgba(239, 68, 68, 0.08);
+	background: rgba(224, 82, 82, 0.08);
 }
 
 /* ── Пустое состояние сайдбара ── */
@@ -215,131 +211,126 @@
 }
 
 .chatHeader {
-	padding: 0 20px;
-	height: 52px;
+	padding: 0 16px;
+	height: 42px;
 	border-bottom: 1px solid var(--border);
 	display: flex;
 	align-items: center;
-	gap: 10px;
+	gap: 8px;
 	flex-shrink: 0;
+	background: var(--bg-sidebar);
 }
 
 .chatHeaderDot {
-	width: 8px;
-	height: 8px;
+	width: 6px;
+	height: 6px;
 	border-radius: 50%;
 	flex-shrink: 0;
 }
 
 .chatHeaderDot.running {
 	background: var(--accent);
-	box-shadow: 0 0 6px var(--accent);
-	animation: pulse 1.4s ease-in-out infinite;
+	box-shadow: 0 0 5px var(--accent);
+	animation: pulse 1.6s ease-in-out infinite;
 }
 .chatHeaderDot.done {
 	background: var(--ok);
 }
 .chatHeaderDot.cancelled {
-	background: rgba(255, 255, 255, 0.38);
+	background: var(--text-muted);
 }
 .chatHeaderDot.paused {
 	background: var(--warn);
-	box-shadow: 0 0 4px var(--warn);
+}
+.chatHeaderDot.interrupted {
+	background: #e8863a;
 }
 .chatHeaderDot.error {
 	background: var(--err);
 }
 .chatHeaderDot.idle {
-	background: rgba(255, 255, 255, 0.2);
+	background: var(--text-muted);
+	opacity: 0.35;
 }
 
 .chatHeaderName {
-	font-size: 14px;
+	font-size: 13px;
 	font-weight: 600;
 	color: var(--text-main);
 }
 
-.chatHeaderStatus {
-	font-size: 11px;
-	color: var(--text-muted);
-}
-
 .chatHeaderModel {
-	font-size: 11px;
-	font-family: "Cascadia Code", "Consolas", monospace;
+	font-size: 10px;
+	font-family: var(--font-mono);
 	color: var(--accent);
-	background: rgba(16, 163, 127, 0.1);
-	border: 1px solid rgba(16, 163, 127, 0.2);
-	border-radius: 5px;
-	padding: 1px 7px;
+	background: var(--accent-dim);
+	border: 1px solid rgba(14, 164, 127, 0.18);
+	border-radius: var(--radius-sm);
+	padding: 1px 6px;
+	letter-spacing: 0.02em;
 }
 
 .chatHeaderSteps {
-	font-size: 11px;
+	font-size: 10px;
 	color: var(--text-muted);
-	background: rgba(255, 255, 255, 0.06);
-	padding: 2px 8px;
-	border-radius: 8px;
+	background: rgba(255, 255, 255, 0.04);
+	padding: 1px 7px;
+	border-radius: var(--radius-sm);
 	margin-left: auto;
+	font-family: var(--font-mono);
 }
 
 .chatHeaderTokens {
-	font-size: 11px;
-	font-family: "Cascadia Code", "Consolas", monospace;
+	font-size: 10px;
+	font-family: var(--font-mono);
 	color: var(--text-muted);
-	opacity: 0.6;
-	padding: 2px 6px;
-	border-radius: 6px;
-	background: rgba(255, 255, 255, 0.04);
-	border: 1px solid rgba(255, 255, 255, 0.07);
+	padding: 1px 5px;
+	border-radius: var(--radius-sm);
+	border: 1px solid var(--border);
+	opacity: 0.55;
+}
+
+.stopRunBtn,
+.pauseRunBtn,
+.resumeRunBtn {
+	font-size: 11px;
+	border-radius: var(--radius-sm);
+	padding: 3px 9px;
+	cursor: pointer;
+	transition:
+		background 0.12s,
+		border-color 0.12s;
+	letter-spacing: 0.01em;
 }
 
 .stopRunBtn {
-	font-size: 11px;
 	color: var(--err);
-	background: rgba(239, 68, 68, 0.08);
-	border: 1px solid rgba(239, 68, 68, 0.28);
-	border-radius: 6px;
-	padding: 4px 10px;
-	cursor: pointer;
-	margin-left: 4px;
+	background: rgba(224, 82, 82, 0.06);
+	border: 1px solid rgba(224, 82, 82, 0.2);
 }
-
 .stopRunBtn:hover {
-	background: rgba(239, 68, 68, 0.14);
-	border-color: rgba(239, 68, 68, 0.42);
+	background: rgba(224, 82, 82, 0.12);
+	border-color: rgba(224, 82, 82, 0.35);
 }
 
 .pauseRunBtn {
-	font-size: 11px;
 	color: var(--warn);
-	background: rgba(246, 211, 101, 0.08);
-	border: 1px solid rgba(246, 211, 101, 0.22);
-	border-radius: 6px;
-	padding: 3px 10px;
-	cursor: pointer;
-	margin-left: 4px;
+	background: rgba(230, 200, 74, 0.06);
+	border: 1px solid rgba(230, 200, 74, 0.2);
 }
-
 .pauseRunBtn:hover {
-	background: rgba(246, 211, 101, 0.14);
-	border-color: rgba(246, 211, 101, 0.42);
+	background: rgba(230, 200, 74, 0.12);
+	border-color: rgba(230, 200, 74, 0.35);
 }
 
 .resumeRunBtn {
-	font-size: 11px;
 	color: var(--ok);
-	background: rgba(51, 209, 122, 0.08);
-	border: 1px solid rgba(51, 209, 122, 0.22);
-	border-radius: 6px;
-	padding: 3px 10px;
-	cursor: pointer;
-	margin-left: 4px;
+	background: rgba(46, 204, 113, 0.06);
+	border: 1px solid rgba(46, 204, 113, 0.2);
 }
-
 .resumeRunBtn:hover {
-	background: rgba(51, 209, 122, 0.14);
-	border-color: rgba(51, 209, 122, 0.42);
+	background: rgba(46, 204, 113, 0.12);
+	border-color: rgba(46, 204, 113, 0.35);
 }
 
 /* ── Пустой placeholder справа ── */
@@ -350,63 +341,49 @@
 	align-items: center;
 	justify-content: center;
 	color: var(--text-muted);
-	font-size: 14px;
-	gap: 12px;
-	opacity: 0.5;
+	font-size: 13px;
+	gap: 10px;
+	opacity: 0.45;
 }
 
 .chatEmptyIcon {
-	font-size: 48px;
-	opacity: 0.25;
+	font-size: 36px;
+	opacity: 0.2;
 }
 
 /* ── Сам чат ── */
 .agentChat {
 	flex: 1;
 	overflow-y: auto;
-	padding: 16px 20px 20px;
+	padding: 14px 18px 18px;
 	display: flex;
 	flex-direction: column;
-	gap: 6px;
-	max-width: 860px;
+	gap: 4px;
+	max-width: 1220px;
 	width: 100%;
 	align-self: center;
 }
 
-.agentChat::-webkit-scrollbar {
-	width: 6px;
-	margin-top: 16px;
-	margin-bottom: 20px;
-}
-.agentChat::-webkit-scrollbar-thumb {
-	background: var(--border);
-	border-radius: 3px;
-}
-.agentChat::-webkit-scrollbar-track {
-	background: transparent;
-	margin-top: 16px;
-	margin-bottom: 20px;
-}
-
 /* ── Task banner ── */
 .taskBanner {
-	padding: 10px 14px;
-	background: rgba(16, 163, 127, 0.07);
-	border: 1px solid rgba(16, 163, 127, 0.2);
-	border-radius: 10px;
-	font-size: 13px;
-	color: #6ee7c7;
-	margin-bottom: 4px;
-	line-height: 1.4;
+	padding: 10px 12px;
+	background: rgba(14, 164, 127, 0.03);
+	border-left: 3px solid var(--accent);
+	border-radius: 0 var(--radius-md) var(--radius-md) 0;
+	font-size: 12px;
+	color: var(--text-main);
+	margin-bottom: 6px;
+	line-height: 1.5;
 }
 
 .taskLabel {
-	font-size: 10px;
+	font-size: 9px;
 	font-weight: 700;
 	text-transform: uppercase;
-	letter-spacing: 0.07em;
+	letter-spacing: 0.1em;
 	color: var(--accent);
-	margin-bottom: 3px;
+	margin-bottom: 4px;
+	opacity: 0.65;
 }
 
 .taskBannerRow {
@@ -417,24 +394,25 @@
 }
 
 .modelBadge {
-	font-size: 11px;
-	font-family: "Cascadia Code", "Consolas", monospace;
+	font-size: 10px;
+	font-family: var(--font-mono);
 	color: var(--accent);
-	background: rgba(16, 163, 127, 0.12);
-	border: 1px solid rgba(16, 163, 127, 0.25);
-	border-radius: 6px;
-	padding: 2px 8px;
+	background: var(--accent-dim);
+	border: 1px solid rgba(14, 164, 127, 0.18);
+	border-radius: var(--radius-sm);
+	padding: 1px 7px;
 	white-space: nowrap;
 	flex-shrink: 0;
 	margin-top: 2px;
+	letter-spacing: 0.02em;
 }
 
 /* ── Session divider ── */
 .sessionDivider {
 	display: flex;
 	align-items: center;
-	gap: 10px;
-	margin: 16px 0 8px;
+	gap: 8px;
+	margin: 12px 0 6px;
 }
 
 .sessionDividerLine {
@@ -444,148 +422,174 @@
 }
 
 .sessionDividerLabel {
-	font-size: 11px;
+	font-size: 10px;
 	color: var(--text-muted);
 	white-space: nowrap;
 	font-style: italic;
+	letter-spacing: 0.02em;
 }
 
 /* ── Шаг ── */
 .stepBlock {
-	display: flex;
-	flex-direction: column;
-	gap: 4px;
-	padding: 10px 14px;
-	border-radius: 10px;
-	background: rgba(255, 255, 255, 0.02);
-	border: 1px solid var(--border);
+	border-radius: var(--radius-md);
+	border: 1px solid transparent;
+	transition:
+		background 0.12s,
+		border-color 0.12s;
 }
 
 .stepBlock.success {
-	border-color: rgba(51, 209, 122, 0.2);
-	background: rgba(51, 209, 122, 0.02);
+	border-color: rgba(46, 204, 113, 0.08);
 }
 .stepBlock.fail {
-	border-color: rgba(255, 123, 114, 0.2);
-	background: rgba(255, 123, 114, 0.02);
+	border-color: rgba(224, 82, 82, 0.12);
 }
 .stepBlock.pending {
-	border-color: rgba(126, 176, 255, 0.12);
+	border-color: rgba(126, 176, 255, 0.08);
+}
+.stepExpanded {
+	background: rgba(255, 255, 255, 0.015);
+	border-color: var(--border) !important;
 }
 
 .stepHeader {
 	display: flex;
 	align-items: center;
 	gap: 8px;
+	padding: 6px 10px;
+	border-radius: var(--radius-md);
+	transition: background 0.1s;
+	user-select: none;
 }
 
-.stepNum {
-	font-size: 10px;
-	color: var(--text-muted);
-	width: 24px;
+.stepHeader:hover {
+	background: rgba(255, 255, 255, 0.025);
+}
+
+.stepDot {
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
 	flex-shrink: 0;
-	font-family: "Cascadia Code", monospace;
+}
+.stepDot.success {
+	background: var(--ok);
+}
+.stepDot.fail {
+	background: var(--err);
+}
+.stepDot.pending {
+	background: #7eb0ff;
+	animation: pulse 1.6s ease-in-out infinite;
 }
 
 .stepAction {
-	font-family: "Cascadia Code", "Consolas", monospace;
+	font-family: var(--font-mono);
 	font-size: 12px;
 	font-weight: 600;
 	flex: 1;
+	letter-spacing: 0.01em;
 }
 
 .stepAction.success {
-	color: var(--ok);
+	color: var(--text-main);
 }
 .stepAction.fail {
 	color: var(--err);
 }
 .stepAction.pending {
-	color: #7eb0ff;
+	color: rgba(126, 176, 255, 0.85);
 }
 
 .stepBadge {
-	font-size: 10px;
-	padding: 1px 7px;
-	border-radius: 4px;
-	font-weight: 600;
+	font-size: 9px;
+	padding: 1px 6px;
+	border-radius: var(--radius-sm);
+	font-weight: 700;
 	flex-shrink: 0;
+	font-family: var(--font-mono);
+	letter-spacing: 0.04em;
 }
 
 .stepBadge.success {
-	background: rgba(51, 209, 122, 0.12);
+	background: rgba(46, 204, 113, 0.1);
 	color: var(--ok);
 }
 .stepBadge.fail {
-	background: rgba(255, 123, 114, 0.12);
+	background: rgba(224, 82, 82, 0.1);
 	color: var(--err);
 }
-.stepBadge.pending {
-	background: rgba(126, 176, 255, 0.1);
-	color: #7eb0ff;
+
+.stepSpinner {
+	width: 12px;
+	height: 12px;
+	border: 2px solid rgba(126, 176, 255, 0.15);
+	border-top-color: #7eb0ff;
+	border-radius: 50%;
+	animation: spin 0.8s linear infinite;
+	flex-shrink: 0;
+}
+
+@keyframes spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+.stepChevron {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: var(--text-muted);
+	opacity: 0.4;
+	transition:
+		transform 0.15s,
+		opacity 0.15s;
+	flex-shrink: 0;
+}
+.stepChevronOpen {
+	transform: rotate(90deg);
+	opacity: 0.7;
+}
+
+.stepBody {
+	padding: 0 10px 8px 25px;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
 }
 
 .stepThought {
-	font-size: 12px;
-	color: var(--text-muted);
-	font-style: italic;
-	padding-left: 32px;
-	line-height: 1.45;
-}
-
-.stepArgs {
-	padding-left: 32px;
-	margin-top: 2px;
-}
-
-.stepArgsPre {
-	font-family: "Cascadia Code", "Consolas", monospace;
 	font-size: 11px;
-	color: rgba(126, 176, 255, 0.7);
-	background: rgba(126, 176, 255, 0.05);
-	border: 1px solid rgba(126, 176, 255, 0.1);
-	border-radius: 6px;
-	padding: 6px 10px;
-	margin: 0;
+	color: var(--text-muted);
+	line-height: 1.5;
 	white-space: pre-wrap;
 	word-break: break-word;
-	max-height: 120px;
-	overflow-y: auto;
-}
-
-.stepStream {
-	padding-left: 32px;
-	margin-top: 4px;
 }
 
 .stepStreamPre {
-	font-family: "Cascadia Code", "Consolas", monospace;
-	font-size: 11px;
-	color: rgba(200, 230, 180, 0.85);
-	background: rgba(60, 80, 40, 0.25);
-	border: 1px solid rgba(130, 200, 80, 0.15);
-	border-radius: 6px;
-	padding: 6px 10px;
+	font-family: var(--font-mono);
+	font-size: 10px;
+	color: rgba(180, 220, 150, 0.8);
+	background: rgba(50, 70, 30, 0.15);
+	border: 1px solid rgba(110, 180, 60, 0.1);
+	border-radius: var(--radius-sm);
+	padding: 6px 8px;
 	margin: 0;
 	white-space: pre-wrap;
 	word-break: break-word;
-	max-height: 300px;
+	max-height: 260px;
 	overflow-y: auto;
 }
 
-.stepResult {
-	padding-left: 32px;
-	margin-top: 2px;
-}
-
 .resultPre {
-	font-family: "Cascadia Code", "Consolas", monospace;
-	font-size: 11px;
+	font-family: var(--font-mono);
+	font-size: 10px;
 	color: var(--text-muted);
-	background: rgba(0, 0, 0, 0.3);
-	border: 1px solid rgba(255, 255, 255, 0.06);
-	border-radius: 6px;
-	padding: 8px 10px;
+	background: rgba(0, 0, 0, 0.2);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	padding: 6px 8px;
 	white-space: pre-wrap;
 	word-break: break-word;
 	max-height: 200px;
@@ -594,71 +598,71 @@
 }
 
 .planBlock {
-	padding: 10px 14px 8px;
-	background: rgba(126, 176, 255, 0.04);
-	border: 1px solid rgba(126, 176, 255, 0.13);
-	border-radius: 10px;
-	margin-top: 4px;
-	margin-bottom: 2px;
+	padding: 8px 12px 7px;
+	background: transparent;
+	border-left: 2px solid rgba(126, 176, 255, 0.15);
+	border-radius: 0;
+	margin-top: 2px;
+	margin-bottom: 4px;
+	margin-left: 4px;
 }
 
 .planHeader {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	margin-bottom: 8px;
+	margin-bottom: 6px;
 }
 
 .planLabel {
-	font-size: 10px;
+	font-size: 9px;
 	font-weight: 700;
 	text-transform: uppercase;
-	letter-spacing: 0.08em;
-	color: rgba(126, 176, 255, 0.7);
+	letter-spacing: 0.1em;
+	color: rgba(126, 176, 255, 0.5);
 }
 
 .planCounter {
 	font-size: 10px;
 	color: var(--text-muted);
-	opacity: 0.7;
+	font-family: var(--font-mono);
 }
 
 .planList {
 	display: flex;
 	flex-direction: column;
-	gap: 3px;
+	gap: 2px;
 }
 
 .planItem {
 	display: flex;
 	align-items: flex-start;
-	gap: 8px;
-	padding: 4px 2px;
+	gap: 7px;
+	padding: 3px 1px;
 }
 
 .planIcon {
 	flex-shrink: 0;
-	width: 16px;
-	height: 16px;
+	width: 14px;
+	height: 14px;
 	margin-top: 1px;
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	font-size: 13px;
+	font-size: 11px;
 	line-height: 1;
 }
 
 .planItem.pending .planIcon {
-	color: rgba(255, 255, 255, 0.2);
+	color: var(--text-muted);
+	opacity: 0.4;
 }
-
 .planItem.in_progress .planIcon {
 	color: #7eb0ff;
 	animation: planSpin 1.4s linear infinite;
 }
-
 .planItem.completed .planIcon {
-	color: #33d17a;
+	color: var(--ok);
 }
 
 @keyframes planSpin {
@@ -671,7 +675,7 @@
 }
 
 .planContent {
-	font-size: 13px;
+	font-size: 12px;
 	line-height: 1.5;
 	color: var(--text-main);
 }
@@ -679,86 +683,88 @@
 .planItem.pending .planContent {
 	color: var(--text-muted);
 }
-
 .planItem.completed .planContent {
-	color: rgba(255, 255, 255, 0.45);
+	color: var(--text-muted);
+	opacity: 0.5;
 	text-decoration: line-through;
-	text-decoration-color: rgba(255, 255, 255, 0.2);
+	text-decoration-color: rgba(255, 255, 255, 0.15);
 }
 
 /* ── Вопрос/ответ директору ── */
 .questionBlock {
-	padding: 10px 14px;
-	background: rgba(246, 211, 101, 0.05);
-	border: 1px solid rgba(246, 211, 101, 0.2);
-	border-radius: 10px;
+	padding: 8px 12px;
+	background: rgba(230, 200, 74, 0.04);
+	border: 1px solid rgba(230, 200, 74, 0.15);
+	border-radius: var(--radius-md);
 }
 
 .questionLabel {
-	font-size: 10px;
+	font-size: 9px;
 	font-weight: 700;
 	text-transform: uppercase;
-	letter-spacing: 0.07em;
+	letter-spacing: 0.1em;
 	color: var(--warn);
 	margin-bottom: 3px;
+	opacity: 0.8;
 }
 
 .questionText {
-	font-size: 13px;
+	font-size: 12px;
 	color: var(--text-main);
-	line-height: 1.4;
+	line-height: 1.45;
 }
 
 .answerBlock {
-	padding: 10px 14px;
-	background: rgba(16, 163, 127, 0.05);
-	border: 1px solid rgba(16, 163, 127, 0.2);
-	border-radius: 10px;
+	padding: 8px 12px;
+	background: rgba(14, 164, 127, 0.04);
+	border: 1px solid rgba(14, 164, 127, 0.15);
+	border-radius: var(--radius-md);
 }
 
 .answerLabel {
-	font-size: 10px;
+	font-size: 9px;
 	font-weight: 700;
 	text-transform: uppercase;
-	letter-spacing: 0.07em;
+	letter-spacing: 0.1em;
 	color: var(--accent);
 	margin-bottom: 3px;
+	opacity: 0.8;
 }
 
 .answerText {
-	font-size: 13px;
+	font-size: 12px;
 	color: var(--text-main);
-	line-height: 1.4;
+	line-height: 1.45;
 }
 
 /* ── Итоговый баннер ── */
 .resultBanner {
-	padding: 10px 14px;
-	border-radius: 10px;
-	font-size: 13px;
-	line-height: 1.4;
-	margin-top: 4px;
+	padding: 10px 12px;
+	border-radius: 0 var(--radius-md) var(--radius-md) 0;
+	font-size: 12px;
+	line-height: 1.5;
+	margin-top: 6px;
 }
 
 .resultBanner.success {
-	background: rgba(51, 209, 122, 0.06);
-	border: 1px solid rgba(51, 209, 122, 0.2);
-	color: #6ee7c7;
+	background: rgba(46, 204, 113, 0.03);
+	border-left: 3px solid var(--ok);
+	color: var(--text-main);
 }
 
 .resultBanner.fail {
-	background: rgba(255, 123, 114, 0.06);
-	border: 1px solid rgba(255, 123, 114, 0.2);
-	color: var(--err);
+	background: rgba(224, 82, 82, 0.03);
+	border-left: 3px solid var(--err);
+	color: var(--text-main);
 }
 
 .resultBannerLabel {
-	font-size: 10px;
+	font-size: 9px;
 	font-weight: 700;
 	text-transform: uppercase;
-	letter-spacing: 0.07em;
-	margin-bottom: 3px;
-	opacity: 0.8;
+	letter-spacing: 0.1em;
+	margin-bottom: 4px;
+	opacity: 0.5;
 }
 
 /* ── Markdown внутри resultBanner ── */
@@ -814,12 +820,253 @@
 
 /* ── Подпись "только просмотр" ── */
 .readonlyBar {
-	padding: 7px 20px;
-	font-size: 11px;
+	padding: 5px 16px;
+	font-size: 10px;
 	color: var(--text-muted);
 	border-top: 1px solid var(--border);
 	text-align: center;
 	flex-shrink: 0;
-	opacity: 0.45;
+	opacity: 0.35;
 	background: var(--bg-sidebar);
+	letter-spacing: 0.02em;
+}
+
+/* ── Вкладки ── */
+.tabBar {
+	display: flex;
+	gap: 1px;
+	padding: 5px 14px;
+	border-bottom: 1px solid var(--border);
+	flex-shrink: 0;
+	background: var(--bg-sidebar);
+}
+
+.tabBtn {
+	font-size: 11px;
+	padding: 3px 10px;
+	border-radius: var(--radius-sm);
+	border: none;
+	background: transparent;
+	color: var(--text-muted);
+	cursor: pointer;
+	transition:
+		background 0.12s,
+		color 0.12s;
+	letter-spacing: 0.01em;
+}
+.tabBtn:hover {
+	background: var(--bg-hover);
+	color: var(--text-sub);
+}
+.tabBtn.tabActive {
+	background: var(--accent-dim);
+	color: var(--accent);
+	font-weight: 600;
+}
+
+/* ── Артефакты ── */
+.artifactsEmpty {
+	flex: 1;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: var(--text-muted);
+	font-size: 13px;
+}
+
+.artifactsPanel {
+	flex: 1;
+	display: flex;
+	overflow: hidden;
+}
+
+.artifactsList {
+	width: 220px;
+	min-width: 220px;
+	border-right: 1px solid var(--border);
+	overflow-y: auto;
+	padding: 8px 0;
+}
+
+.artifactItem {
+	padding: 8px 14px;
+	cursor: pointer;
+	transition: background 0.12s;
+	border-radius: 6px;
+	margin: 2px 6px;
+}
+.artifactItem:hover {
+	background: rgba(255, 255, 255, 0.05);
+}
+.artifactSelected {
+	background: rgba(16, 163, 127, 0.12) !important;
+}
+
+.artifactName {
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--text-main);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.artifactMeta {
+	font-size: 11px;
+	color: var(--text-muted);
+	display: flex;
+	gap: 8px;
+	margin-top: 2px;
+}
+
+.artifactViewer {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+}
+
+.artifactViewerHeader {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 14px;
+	border-bottom: 1px solid var(--border);
+	flex-shrink: 0;
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--text-main);
+}
+
+.artifactViewerMime {
+	font-size: 11px;
+	color: var(--text-muted);
+	background: rgba(255, 255, 255, 0.06);
+	padding: 1px 6px;
+	border-radius: 4px;
+	margin-left: auto;
+}
+
+.artifactCloseBtn {
+	font-size: 11px;
+	color: var(--text-muted);
+	background: none;
+	border: none;
+	cursor: pointer;
+	padding: 2px 4px;
+	border-radius: 4px;
+	transition: background 0.15s;
+}
+.artifactCloseBtn:hover {
+	background: rgba(255, 255, 255, 0.07);
+}
+
+.artifactContent {
+	flex: 1;
+	overflow: auto;
+	padding: 14px;
+	font-size: 12px;
+	line-height: 1.6;
+	white-space: pre-wrap;
+	word-break: break-all;
+	color: var(--text-main);
+	background: var(--bg-main);
+}
+
+.artifactLoading {
+	flex: 1;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: var(--text-muted);
+	font-size: 13px;
+}
+
+.artifactBinary {
+	color: var(--text-muted);
+	font-style: italic;
+}
+
+/* ── Timeline ── */
+.timeline {
+	flex: 1;
+	overflow-y: auto;
+	padding: 20px 28px 28px;
+	display: flex;
+	flex-direction: column;
+	max-width: 680px;
+	align-self: center;
+	width: 100%;
+}
+.timeline::-webkit-scrollbar {
+	width: 6px;
+}
+.timeline::-webkit-scrollbar-thumb {
+	background: var(--border);
+	border-radius: 3px;
+}
+
+.tlRow {
+	display: flex;
+	gap: 14px;
+	min-height: 40px;
+}
+
+.tlLeft {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	flex-shrink: 0;
+	width: 14px;
+	padding-top: 3px;
+}
+
+.tlTime {
+	font-family: "Cascadia Code", monospace;
+	font-size: 10px;
+	color: var(--text-muted);
+	white-space: nowrap;
+	margin-bottom: 4px;
+}
+
+.tlDot {
+	width: 10px;
+	height: 10px;
+	border-radius: 50%;
+	flex-shrink: 0;
+	border: 2px solid var(--bg-main);
+	box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.tlLine {
+	width: 2px;
+	flex: 1;
+	background: var(--border);
+	margin-top: 4px;
+	min-height: 16px;
+}
+
+.tlContent {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding-bottom: 16px;
+	padding-top: 1px;
+	flex: 1;
+	min-width: 0;
+}
+
+.tlLabel {
+	font-size: 13px;
+	font-weight: 600;
+	line-height: 1.3;
+}
+
+.tlDetail {
+	font-size: 11px;
+	color: var(--text-muted);
+	line-height: 1.45;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }

@@ -21,7 +21,14 @@ export interface ChatEvent {
 	plan?: PlanItem[];
 }
 
-export type SubAgentStatus = "idle" | "running" | "done" | "error" | "cancelled" | "paused";
+export type SubAgentStatus =
+	| "idle"
+	| "running"
+	| "done"
+	| "error"
+	| "cancelled"
+	| "paused"
+	| "interrupted";
 
 export interface SubAgentStep {
 	step: number;
@@ -51,6 +58,7 @@ export interface SubAgentPane {
 	question?: string;
 	answer?: string;
 	result?: string;
+	errorMessage?: string;
 	startedAt: number;
 	model?: string;
 	sessions?: SubAgentSession[];
@@ -84,4 +92,28 @@ export interface AgentState {
 	tools: Tool[];
 	isRunning: boolean;
 	liveStatus: string;
+}
+
+export type SupervisorAlertType =
+	| "hang_detected"
+	| "stale_paused"
+	| "waiting_timeout"
+	| "deadlock_detected";
+
+export interface SupervisorAlertPayload {
+	type: SupervisorAlertType;
+	run_id?: string;
+	agent_name?: string;
+	task?: string;
+	idle_seconds?: number;
+	message: string;
+	step?: number;
+	age_seconds?: number;
+	cycles?: string[][];
+}
+
+export interface SupervisorAlert {
+	event: string;
+	payload: SupervisorAlertPayload;
+	timestamp: number;
 }

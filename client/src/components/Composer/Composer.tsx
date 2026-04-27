@@ -111,7 +111,7 @@ export function Composer({
 					<textarea
 						value={task}
 						onChange={(e) => onTaskChange(e.target.value)}
-						placeholder="Введите запрос... (Ctrl+V — вставить изображение)"
+						placeholder="Введите запрос..."
 						onKeyDown={(e) => {
 							if (e.key === "Enter" && !e.shiftKey && !isRunning) {
 								e.preventDefault();

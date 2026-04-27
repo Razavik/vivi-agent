@@ -5,7 +5,7 @@ from http import HTTPStatus
 from typing import Any
 
 from src.app_factory import describe_all_tools
-from src.infra.config import MODELS_FILE
+from src.infra.config import DIRECTOR_REQUIRED_TOOLS, MODELS_FILE, _load_tools_config, _save_tools_config, get_agent_tools_config, _load_agents_config, _save_agents_config, load_available_models, _load_user_profile, _save_user_profile
 from src.web.confirmation import ConfirmationManager
 from src.web.context import ServerContext
 from src.web.sse_stream import SSEStream
@@ -30,11 +30,27 @@ class Routes:
                 data = json.loads(MODELS_FILE.read_text(encoding="utf-8"))
             except Exception:
                 pass
-        agents = ["director", "file", "system", "telegram", "web"]
+        agents = list(_load_agents_config().keys())
         return {
             "default": default,
             "models": {a: data.get(a, "") for a in agents},
         }
+
+    def get_available_models(self) -> dict[str, Any]:
+        """Возвращает список моделей из data/available_models.json."""
+        return {"models": load_available_models()}
+
+    def get_ollama_models(self) -> dict[str, Any]:
+        """Получить список моделей доступных в Ollama."""
+        import urllib.request
+        base_url = self.ctx.settings.ollama_base_url.rstrip("/")
+        try:
+            with urllib.request.urlopen(f"{base_url}/api/tags", timeout=5) as resp:
+                data = json.loads(resp.read().decode())
+            models = [m["name"] for m in data.get("models", [])]
+            return {"models": models}
+        except Exception as e:
+            return {"models": [], "error": str(e)}
 
     def set_models(self, body: dict[str, Any]) -> dict[str, Any]:
         models: dict[str, str] = body.get("models", {})
@@ -42,6 +58,67 @@ class Routes:
         MODELS_FILE.parent.mkdir(parents=True, exist_ok=True)
         MODELS_FILE.write_text(json.dumps(cleaned, ensure_ascii=False, indent=2), encoding="utf-8")
         return {"saved": True, "models": cleaned}
+
+    def get_tools_config(self) -> dict[str, Any]:
+        """Возвращает конфигурацию инструментов для всех агентов."""
+        return {"config": _load_tools_config()}
+
+    def set_tools_config(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Сохраняет конфигурацию инструментов."""
+        config = body.get("config", {})
+        if not isinstance(config, dict):
+            return {"error": "config must be an object"}, HTTPStatus.BAD_REQUEST
+        # Валидируем структуру
+        cleaned: dict[str, dict[str, bool]] = {}
+        for agent, tools in config.items():
+            if isinstance(tools, dict):
+                cleaned[agent] = {tool: bool(enabled) for tool, enabled in tools.items()}
+        _save_tools_config(cleaned)
+        return {"saved": True, "config": cleaned}
+
+    def get_agents_config(self) -> dict[str, Any]:
+        """Возвращает конфигурацию агентов из data/agents.json."""
+        return {"config": _load_agents_config()}
+
+    def set_agents_config(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Сохраняет конфигурацию агентов."""
+        config = body.get("config", {})
+        if not isinstance(config, dict):
+            return {"error": "config must be an object"}, HTTPStatus.BAD_REQUEST
+        cleaned = {k: v for k, v in config.items() if isinstance(v, (str, dict, list, bool, int, float))}
+        director_cfg = cleaned.get("director")
+        if isinstance(director_cfg, dict):
+            raw_tools = director_cfg.get("tools")
+            tools_by_name: dict[str, dict[str, Any]] = {}
+            if isinstance(raw_tools, list):
+                for entry in raw_tools:
+                    if isinstance(entry, dict):
+                        name = str(entry.get("name", ""))
+                        if name:
+                            tools_by_name[name] = dict(entry)
+                    elif isinstance(entry, str):
+                        tools_by_name[entry] = {"name": entry, "enabled": True}
+            for tool_name in DIRECTOR_REQUIRED_TOOLS:
+                current = tools_by_name.get(tool_name, {"name": tool_name})
+                current["enabled"] = True
+                current["required"] = True
+                tools_by_name[tool_name] = current
+            director_cfg["tools"] = list(tools_by_name.values())
+        _save_agents_config(cleaned)
+        return {"saved": True, "config": cleaned}
+
+    def get_user_profile(self) -> dict[str, Any]:
+        """Возвращает профиль пользователя."""
+        return {"profile": _load_user_profile()}
+
+    def set_user_profile(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Сохраняет профиль пользователя."""
+        profile = body.get("profile", {})
+        if not isinstance(profile, dict):
+            return {"error": "profile must be an object"}, HTTPStatus.BAD_REQUEST
+        cleaned = {k: str(v) if isinstance(v, str) else "" for k, v in profile.items() if isinstance(v, (str, int, float, bool))}
+        _save_user_profile(cleaned)
+        return {"saved": True, "profile": cleaned}
 
     def get_agents_history(self) -> dict[str, Any]:
         memory_dir = self.ctx.settings.sub_agent_memory_dir
@@ -75,6 +152,16 @@ class Routes:
         ChatMemoryStore(f).clear()
         return {"cleared": True, "agent": agent_name}
 
+    def clear_agent_runs(self, agent_name: str) -> dict[str, Any]:
+        memory_dir = self.ctx.settings.sub_agent_memory_dir
+        f = memory_dir / f"{agent_name}-memory.json"
+        if not f.exists():
+            return {"cleared": False, "error": "Файл не найден"}
+        from src.infra.chat_memory import ChatMemoryStore
+
+        ChatMemoryStore(f).clear()
+        return {"cleared": True, "agent": agent_name}
+
     def clear_all_agents_memory(self) -> dict[str, Any]:
         memory_dir = self.ctx.settings.sub_agent_memory_dir
         cleared: list[str] = []
@@ -95,6 +182,30 @@ class Routes:
 
     def get_active_runs(self) -> dict[str, Any]:
         return {"runs": self.ctx.get_active_runs()}
+
+    def get_run_by_id(self, run_id: str) -> dict[str, Any]:
+        run = self.ctx.run_registry.get(run_id)
+        if run is None:
+            return {"error": f"run {run_id!r} не найден"}
+        return run.to_dict()
+
+    def get_bus_history(self, run_id: str | None = None, msg_type: str | None = None, limit: int = 100) -> dict[str, Any]:
+        return {"messages": self.ctx.get_bus_history(run_id=run_id, msg_type=msg_type, limit=limit)}
+
+    def get_crash_reports(self) -> dict[str, Any]:
+        return {"crashes": self.ctx.crash_reporter.list_reports()}
+
+    def get_crash_report(self, filename: str) -> dict[str, Any]:
+        return self.ctx.crash_reporter.read_report(filename)
+
+    def get_supervisor_alerts(self, limit: int = 10) -> dict[str, Any]:
+        return {"alerts": self.ctx.get_supervisor_alerts(limit)}
+
+    def get_run_artifacts(self, run_id: str) -> dict[str, Any]:
+        return {"run_id": run_id, "artifacts": self.ctx.list_artifacts(run_id)}
+
+    def get_run_artifact(self, run_id: str, name: str) -> dict[str, Any]:
+        return self.ctx.read_artifact(run_id, name)
 
     def clear_history(self) -> dict[str, Any]:
         self.ctx.memory_store.clear()

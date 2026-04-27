@@ -98,3 +98,38 @@ class ArtifactStore:
                 meta_path.unlink()
                 removed = True
             return removed
+
+    def gc_run(self, run_id: str, older_than_seconds: float = 0.0) -> int:
+        """Удаляет все артефакты run (опционально только старше N секунд). Возвращает кол-во удалённых."""
+        run_dir = self._run_dir(run_id)
+        if not run_dir.exists():
+            return 0
+        cutoff = time.time() - older_than_seconds
+        count = 0
+        artifacts = self.list(run_id)
+        for meta in artifacts:
+            name = meta.get("name", "")
+            if older_than_seconds > 0:
+                created_at = float(meta.get("created_at", 0))
+                if created_at > cutoff:
+                    continue
+            if name and self.delete(run_id, name):
+                count += 1
+        with self._lock:
+            try:
+                run_dir.rmdir()
+            except OSError:
+                pass
+        return count
+
+    def copy_artifact(self, src_run_id: str, src_name: str, dst_run_id: str, dst_name: str | None = None) -> dict[str, Any]:
+        """Копирует артефакт из одного run в другой (для handoff)."""
+        src_data = self.read(src_run_id, src_name)
+        if "error" in src_data:
+            return src_data
+        target_name = dst_name or src_name
+        if src_data["mime_type"].startswith("text/"):
+            content: str | bytes = src_data["content"]
+        else:
+            content = bytes.fromhex(src_data["content"])
+        return self.create(dst_run_id, target_name, content, src_data["mime_type"])

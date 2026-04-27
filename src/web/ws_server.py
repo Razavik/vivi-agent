@@ -12,6 +12,24 @@ from websockets.asyncio.server import serve, ServerConnection
 from src.web.context import ServerContext
 from src.web.routes import Routes
 
+_supervisor_subscribers: set[tuple[asyncio.AbstractEventLoop, asyncio.Queue]] = set()
+_supervisor_lock = threading.Lock()
+
+
+def broadcast_supervisor_alert(alert: dict) -> None:
+    """Вызывается из фонового потока SupervisorLoop → рассылает алерт всем WS-подписчикам."""
+    with _supervisor_lock:
+        subscribers = list(_supervisor_subscribers)
+    for loop, q in subscribers:
+        loop.call_soon_threadsafe(_put_alert_nowait, q, alert)
+
+
+def _put_alert_nowait(q: asyncio.Queue, alert: dict) -> None:
+    try:
+        q.put_nowait(alert)
+    except asyncio.QueueFull:
+        pass
+
 
 async def _handle_connection(ws: ServerConnection, routes: Routes) -> None:
     """Обрабатываем одно WS-соединение: получаем задачу, стримим события."""
@@ -66,6 +84,31 @@ async def _handle_connection(ws: ServerConnection, routes: Routes) -> None:
                 break
 
         agent_thread.join(timeout=5)
+
+    elif action == "subscribe_supervisor":
+        # Клиент подписывается на supervisor-алерты — сразу отдаём накопленные, потом стримим новые
+        q: asyncio.Queue = asyncio.Queue(maxsize=50)
+        loop = asyncio.get_running_loop()
+        existing = routes.get_supervisor_alerts(20)
+        for alert in existing.get("alerts", []):
+            await ws.send(json.dumps(alert, ensure_ascii=False))
+        with _supervisor_lock:
+            _supervisor_subscribers.add((loop, q))
+        try:
+            while True:
+                try:
+                    alert = await asyncio.wait_for(q.get(), timeout=30.0)
+                    await ws.send(json.dumps(alert, ensure_ascii=False))
+                except asyncio.TimeoutError:
+                    try:
+                        await ws.ping()
+                    except websockets.exceptions.ConnectionClosed:
+                        break
+                except websockets.exceptions.ConnectionClosed:
+                    break
+        finally:
+            with _supervisor_lock:
+                _supervisor_subscribers.discard((loop, q))
 
     elif action == "cancel":
         result = routes.cancel()

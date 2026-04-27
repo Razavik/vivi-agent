@@ -3,26 +3,49 @@ from __future__ import annotations
 import json
 import re
 import time
+from dataclasses import dataclass
 from typing import Any, Callable
 
 import requests
 
 from src.agent.schemas import ActionStep
-from src.infra.errors import LLMResponseError
+from src.infra.errors import LLMResponseError, ValidationError
+
+
+@dataclass
+class LLMResponse:
+    content: str
+    thinking: str = ""
+    eval_count: int = 0
+    prompt_eval_count: int = 0
+    done_reason: str = "stop"
 
 
 class OllamaClient:
-    def __init__(self, base_url: str, model: str, timeout_seconds: int | None, num_ctx: int = 32768) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        timeout_seconds: int | None,
+        num_ctx: int = 32768,
+        api_key: str | None = None,
+        keep_alive: str = "10m",
+        think: bool = False,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout_seconds = timeout_seconds
         self.num_ctx = num_ctx
+        self.keep_alive = keep_alive
+        self.think = think
+        self._headers: dict[str, str] = {"Content-Type": "application/json"}
+        if api_key:
+            self._headers["Authorization"] = f"Bearer {api_key}"
 
     def _action_step_format_schema(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "thought": {"type": "string"},
                 "action": {"type": "string"},
                 "args": {
                     "type": "object",
@@ -40,7 +63,6 @@ class OllamaClient:
                         "required": ["id", "content", "status"],
                     },
                 },
-                "requires_confirmation": {"type": "boolean"},
                 "done": {"type": "boolean"},
                 "summary": {
                     "anyOf": [
@@ -49,88 +71,143 @@ class OllamaClient:
                     ]
                 },
             },
-            "required": ["action", "args", "requires_confirmation", "done"],
+            "required": ["action", "args", "done"],
         }
+
+    def _build_request_body(
+        self,
+        messages: list[dict[str, object]],
+        stream: bool,
+        response_format: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "stream": stream,
+            "keep_alive": self.keep_alive,
+            "options": {"num_ctx": self.num_ctx},
+        }
+        if response_format is not None:
+            body["format"] = response_format
+        if self.think:
+            body["think"] = True
+        return body
 
     def plan_next_step(
         self,
         messages: list[dict[str, object]],
         on_stream_content: Callable[[str], None] | None = None,
+        on_thinking: Callable[[str], None] | None = None,
+        on_retry_error: Callable[[int, int, str], None] | None = None,
         max_retries: int = 3,
     ) -> ActionStep:
         response_format = self._action_step_format_schema()
         last_exc: Exception | None = None
+        retry_messages = list(messages)
+        bad_content = ""
         for attempt in range(1, max_retries + 1):
             try:
                 if on_stream_content is None:
-                    response = requests.post(
-                        f"{self.base_url}/api/chat",
-                        json={
-                            "model": self.model,
-                            "messages": messages,
-                            "stream": False,
-                            "format": response_format,
-                            "options": {"num_ctx": self.num_ctx},
-                        },
-                        timeout=self.timeout_seconds,
-                    )
-                    response.raise_for_status()
-                    response.encoding = "utf-8"
-                    data = response.json()
-                    content = self._extract_content(data)
+                    llm_resp = self._call(retry_messages, response_format=response_format)
+                    if on_thinking and llm_resp.thinking:
+                        on_thinking(llm_resp.thinking)
                 else:
-                    content = self._stream_content(messages, on_stream_content)
-                content = self._clean_markdown_code_blocks(content)
+                    llm_resp = self._stream(retry_messages, on_stream_content, on_thinking=on_thinking)
+                content = self._clean_markdown_code_blocks(llm_resp.content)
                 try:
                     parsed = json.loads(content)
-                except json.JSONDecodeError as exc:
-                    raise LLMResponseError(f"Модель вернула невалидный JSON: {content}") from exc
-                return ActionStep.from_dict(parsed)
-            except LLMResponseError as exc:
+                except json.JSONDecodeError:
+                    # Модель вернула текст вместо JSON — пробуем обернуть в finish_task
+                    text = content.strip()
+                    if text and not text.startswith("{"):
+                        parsed = {"action": "finish_task", "args": {"summary": text}, "done": True}
+                    else:
+                        raise LLMResponseError(f"Невалидный JSON: {text[:200]}") from None
+                # Ollama иногда вставляет "text\n" как placeholder для string-полей в JSON Schema
+                args = parsed.get("args")
+                if isinstance(args, dict):
+                    for key in ("summary", "message", "task"):
+                        val = args.get(key)
+                        if isinstance(val, str) and re.match(r"^text[\s\n]", val):
+                            args[key] = val[4:].lstrip("\n").lstrip()
+                step = ActionStep.from_dict(parsed)
+                step._llm_response = llm_resp
+                return step
+            except (LLMResponseError, ValidationError) as exc:
                 last_exc = exc
+                bad_content = ""
+                try:
+                    bad_content = llm_resp.content
+                except Exception:
+                    pass
+                if on_retry_error:
+                    on_retry_error(attempt, max_retries, str(exc))
                 if attempt < max_retries:
+                    retry_messages = list(messages) + [
+                        {"role": "assistant", "content": bad_content},
+                        {"role": "user", "content": f"ОШИБКА ФОРМАТА: {exc}\nОтветь ТОЛЬКО валидным JSON с полями: action, args, done. Никакого текста вне JSON. Ответ должен быть коротким."},
+                    ]
                     time.sleep(1.5 * attempt)
             except Exception:
                 raise
+        # Попробуем извлечь частичный ответ из последнего контента
+        if last_exc is not None:
+            try:
+                raw = bad_content if bad_content else ""
+                # Пробуем починить обрезанный JSON
+                if '"finish_task"' in raw or '"done":true' in raw or '"done": true' in raw:
+                    return ActionStep(action="finish_task", args={"summary": "Задача завершена"}, done=True)
+            except Exception:
+                pass
         raise last_exc  # type: ignore[misc]
 
     def chat(self, messages: list[dict[str, object]]) -> str:
         """Простой текстовый запрос без JSON-формата. Возвращает сырой текст ответа."""
+        return self._call(messages).content
+
+    def _call(
+        self,
+        messages: list[dict[str, object]],
+        response_format: dict[str, Any] | None = None,
+    ) -> LLMResponse:
+        """Синхронный не-потоковый запрос. Возвращает LLMResponse."""
+        body = self._build_request_body(messages, stream=False, response_format=response_format)
         response = requests.post(
             f"{self.base_url}/api/chat",
-            json={
-                "model": self.model,
-                "messages": messages,
-                "stream": False,
-                "options": {"num_ctx": self.num_ctx},
-            },
+            json=body,
+            headers=self._headers,
             timeout=self.timeout_seconds,
         )
         response.raise_for_status()
         response.encoding = "utf-8"
-        data = response.json()
-        return self._extract_content(data)
+        return self._parse_response(response.json())
 
-    def _stream_content(
+    def _stream(
         self,
         messages: list[dict[str, object]],
-        on_stream_content: Callable[[str], None],
-    ) -> str:
+        on_content: Callable[[str], None],
+        on_thinking: Callable[[str], None] | None = None,
+    ) -> LLMResponse:
+        """Потоковый запрос. Вызывает on_content по мере генерации, возвращает полный LLMResponse."""
+        body = self._build_request_body(
+            messages, stream=True, response_format=self._action_step_format_schema()
+        )
         response = requests.post(
             f"{self.base_url}/api/chat",
-            json={
-                "model": self.model,
-                "messages": messages,
-                "stream": True,
-                "format": self._action_step_format_schema(),
-                "options": {"num_ctx": self.num_ctx},
-            },
+            json=body,
+            headers=self._headers,
             timeout=self.timeout_seconds,
             stream=True,
         )
         response.raise_for_status()
         response.encoding = "utf-8"
+
         content_parts: list[str] = []
+        thinking_parts: list[str] = []
+        eval_count = 0
+        prompt_eval_count = 0
+        done_reason = "stop"
+
         for raw_line in response.iter_lines(decode_unicode=False):
             if not raw_line:
                 continue
@@ -144,22 +221,47 @@ class OllamaClient:
                 payload = json.loads(line)
             except json.JSONDecodeError as exc:
                 raise LLMResponseError(f"Модель вернула невалидный поток JSON: {line}") from exc
+
             message = payload.get("message")
             if isinstance(message, dict):
                 chunk = message.get("content")
                 if isinstance(chunk, str) and chunk:
                     content_parts.append(chunk)
-                    on_stream_content("".join(content_parts))
-        return "".join(content_parts)
+                    on_content("".join(content_parts))
+                thinking_chunk = message.get("thinking")
+                if isinstance(thinking_chunk, str) and thinking_chunk:
+                    thinking_parts.append(thinking_chunk)
+                    if on_thinking:
+                        on_thinking("".join(thinking_parts))
 
-    def _extract_content(self, payload: dict[str, Any]) -> str:
+            if payload.get("done"):
+                eval_count = payload.get("eval_count", 0)
+                prompt_eval_count = payload.get("prompt_eval_count", 0)
+                done_reason = payload.get("done_reason", "stop")
+
+        return LLMResponse(
+            content="".join(content_parts),
+            thinking="".join(thinking_parts),
+            eval_count=eval_count,
+            prompt_eval_count=prompt_eval_count,
+            done_reason=done_reason,
+        )
+
+    def _parse_response(self, payload: dict[str, Any]) -> LLMResponse:
+        """Разбирает не-потоковый ответ Ollama в LLMResponse."""
         message = payload.get("message")
         if not isinstance(message, dict):
             raise LLMResponseError("В ответе Ollama отсутствует message")
         content = message.get("content")
         if not isinstance(content, str) or not content.strip():
             raise LLMResponseError("В ответе Ollama отсутствует content")
-        return content.strip()
+        return LLMResponse(
+            content=content.strip(),
+            thinking=message.get("thinking") or "",
+            eval_count=payload.get("eval_count", 0),
+            prompt_eval_count=payload.get("prompt_eval_count", 0),
+            done_reason=payload.get("done_reason", "stop"),
+        )
 
     def _clean_markdown_code_blocks(self, content: str) -> str:
         # Убираем markdown кодовые блокки вида ```json ... ``` или ``` ... ```

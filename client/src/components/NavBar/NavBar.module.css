@@ -1,30 +1,31 @@
 .navbar {
-	width: 56px;
-	min-width: 56px;
+	width: 48px;
+	min-width: 48px;
 	height: 100%;
 	background: var(--bg-sidebar);
 	border-right: 1px solid var(--border);
 	display: flex;
 	flex-direction: column;
 	align-items: center;
-	padding: 12px 0;
-	gap: 4px;
+	padding: 10px 0 12px;
+	gap: 2px;
 	flex-shrink: 0;
 }
 
 .logo {
-	width: 32px;
-	height: 32px;
-	border-radius: 8px;
+	width: 28px;
+	height: 28px;
+	border-radius: var(--radius-sm);
 	background: var(--accent);
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	font-size: 14px;
-	font-weight: 700;
+	font-size: 12px;
+	font-weight: 800;
 	color: #fff;
-	margin-bottom: 12px;
+	margin-bottom: 10px;
 	flex-shrink: 0;
+	letter-spacing: -0.02em;
 }
 
 .spacer {
@@ -32,9 +33,9 @@
 }
 
 .navBtn {
-	width: 40px;
-	height: 40px;
-	border-radius: 10px;
+	width: 36px;
+	height: 36px;
+	border-radius: var(--radius-md);
 	background: transparent;
 	border: none;
 	color: var(--text-muted);
@@ -42,33 +43,57 @@
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	transition: all 0.15s;
+	transition:
+		background 0.12s,
+		color 0.12s;
 	position: relative;
 }
 
 .navBtn:hover {
-	background: rgba(255, 255, 255, 0.06);
-	color: var(--text-main);
+	background: var(--bg-hover);
+	color: var(--text-sub);
 }
 
 .navBtn.active {
-	background: rgba(16, 163, 127, 0.15);
+	background: var(--accent-dim);
 	color: var(--accent);
 }
 
 .badge {
 	position: absolute;
-	top: 6px;
-	right: 6px;
-	width: 8px;
-	height: 8px;
+	top: 7px;
+	right: 7px;
+	width: 6px;
+	height: 6px;
 	border-radius: 50%;
 	background: var(--accent);
-	box-shadow: 0 0 6px var(--accent);
-	animation: pulse 1.4s ease-in-out infinite;
+	box-shadow: 0 0 4px var(--accent);
+	animation: pulse 1.6s ease-in-out infinite;
 }
 
 @keyframes pulse {
-	0%, 100% { opacity: 1; }
-	50% { opacity: 0.3; }
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.25;
+	}
+}
+
+.alertBadge {
+	position: absolute;
+	top: 5px;
+	right: 5px;
+	min-width: 14px;
+	height: 14px;
+	padding: 0 3px;
+	border-radius: 7px;
+	background: var(--err);
+	color: #fff;
+	font-size: 9px;
+	font-weight: 700;
+	line-height: 14px;
+	text-align: center;
+	font-family: var(--font-mono);
 }

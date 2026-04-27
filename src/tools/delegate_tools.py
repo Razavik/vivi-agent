@@ -6,11 +6,12 @@ from uuid import uuid4
 
 from src.agent.agent_registry import AgentRegistry
 from src.agent.run_control import RunController
+from src.agent.schemas import SubAgentResult
 from src.infra.errors import ToolExecutionError
 
 
 class DelegateTools:
-    """Инструменты для делегирования задач сабагентам."""
+    """Tools used by the director to run specialized sub-agents."""
 
     def __init__(
         self,
@@ -25,7 +26,6 @@ class DelegateTools:
         self.create_run_controller = create_run_controller
 
     def delegate_task(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Делегировать задачу специализированному агенту."""
         agent_name = str(args.get("agent_name", ""))
         task = str(args.get("task", ""))
         images: list[str] = args.get("images") or []
@@ -42,7 +42,7 @@ class DelegateTools:
 
         run_id = str(args.get("run_id", "")).strip() or str(uuid4())
         controller = self._make_run_controller(run_id, agent_name, task)
-        return agent.run(
+        raw_result = agent.run(
             task,
             run_id=run_id,
             event_sink=self.event_sink,
@@ -50,13 +50,9 @@ class DelegateTools:
             controller=controller,
             images=images,
         )
+        return self._normalize_result(raw_result)
 
     def delegate_parallel(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Выполнить задачи у нескольких агентов параллельно.
-
-        args.tasks — список объектов {agent_name: str, task: str, images?: list, run_id?: str}.
-        Возвращает список results с отдельным run_id для каждого запуска.
-        """
         tasks: list[dict[str, str]] = args.get("tasks", [])
         if not tasks:
             raise ToolExecutionError("Параметр tasks не может быть пустым")
@@ -71,16 +67,18 @@ class DelegateTools:
 
             agent = self.agent_registry.get(agent_name)
             if agent is None:
-                return {
-                    "index": index,
+                result = self._normalize_result({
                     "run_id": run_id,
                     "agent_name": agent_name,
+                    "status": "failed",
                     "success": False,
                     "result": f"Неизвестный агент: {agent_name}",
-                }
+                })
+                result["index"] = index
+                return result
 
             controller = self._make_run_controller(run_id, agent_name, task)
-            result = agent.run(
+            raw_result = agent.run(
                 task,
                 run_id=run_id,
                 event_sink=self.event_sink,
@@ -88,6 +86,7 @@ class DelegateTools:
                 controller=controller,
                 images=images,
             )
+            result = self._normalize_result(raw_result)
             result["index"] = index
             return result
 
@@ -103,8 +102,6 @@ class DelegateTools:
         return {"results": results, "completed": len(results)}
 
     def get_ask_director_tool(self) -> Callable[[dict[str, Any]], dict[str, Any]]:
-        """Возвращает функцию-инструмент ask_director для регистрации в реестре сабагента."""
-
         def ask_director(args: dict[str, Any]) -> dict[str, Any]:
             question = str(args.get("question", ""))
             if not question:
@@ -120,3 +117,8 @@ class DelegateTools:
         if self.create_run_controller is None:
             return None
         return self.create_run_controller(run_id, agent_name, task)
+
+    def _normalize_result(self, raw_result: dict[str, Any]) -> dict[str, Any]:
+        structured = SubAgentResult.from_raw(raw_result).to_dict()
+        structured["result"] = structured["summary"]
+        return structured

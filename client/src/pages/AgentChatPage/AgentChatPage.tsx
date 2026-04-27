@@ -5,6 +5,101 @@ import remarkGfm from "remark-gfm";
 import styles from "./AgentChatPage.module.css";
 import type { PlanItem, SubAgentPane, SubAgentSession, SubAgentStep } from "../../types";
 
+interface ArtifactMeta {
+	name: string;
+	mime_type: string;
+	size: number;
+	created_at?: number;
+}
+
+interface ArtifactContent extends ArtifactMeta {
+	content: string;
+}
+
+function ArtifactsPanel({ runId }: { runId: string }) {
+	const [artifacts, setArtifacts] = useState<ArtifactMeta[]>([]);
+	const [selected, setSelected] = useState<ArtifactContent | null>(null);
+	const [loading, setLoading] = useState(false);
+
+	const reload = useCallback(async () => {
+		try {
+			const res = await fetch(`/api/runs/${runId}/artifacts`);
+			const data = await res.json();
+			setArtifacts(data.artifacts ?? []);
+		} catch {
+			// ignore
+		}
+	}, [runId]);
+
+	useEffect(() => {
+		void reload();
+		const timer = setInterval(() => void reload(), 5000);
+		return () => clearInterval(timer);
+	}, [reload]);
+
+	const openArtifact = async (name: string) => {
+		setLoading(true);
+		try {
+			const res = await fetch(`/api/runs/${runId}/artifacts/${encodeURIComponent(name)}`);
+			const data = await res.json();
+			setSelected(data);
+		} catch {
+			// ignore
+		} finally {
+			setLoading(false);
+		}
+	};
+
+	if (!artifacts.length) {
+		return <div className={styles.artifactsEmpty}>Нет артефактов</div>;
+	}
+
+	return (
+		<div className={styles.artifactsPanel}>
+			<div className={styles.artifactsList}>
+				{artifacts.map((a) => (
+					<div
+						key={a.name}
+						className={`${styles.artifactItem} ${selected?.name === a.name ? styles.artifactSelected : ""}`}
+						onClick={() => void openArtifact(a.name)}
+					>
+						<div className={styles.artifactName}>{a.name}</div>
+						<div className={styles.artifactMeta}>
+							<span>{a.mime_type}</span>
+							<span>{(a.size / 1024).toFixed(1)} KB</span>
+						</div>
+					</div>
+				))}
+			</div>
+			{selected && (
+				<div className={styles.artifactViewer}>
+					<div className={styles.artifactViewerHeader}>
+						<span>{selected.name}</span>
+						<span className={styles.artifactViewerMime}>{selected.mime_type}</span>
+						<button
+							className={styles.artifactCloseBtn}
+							onClick={() => setSelected(null)}
+						>
+							✕
+						</button>
+					</div>
+					{loading ? (
+						<div className={styles.artifactLoading}>Загрузка…</div>
+					) : selected.mime_type.startsWith("text/") ? (
+						<pre className={styles.artifactContent}>{selected.content}</pre>
+					) : (
+						<div className={styles.artifactContent}>
+							<span className={styles.artifactBinary}>
+								[binary: {selected.content.length / 2} bytes]
+							</span>
+						</div>
+					)}
+				</div>
+			)}
+		</div>
+	);
+}
+
 interface AgentChatPageProps {
 	panes: SubAgentPane[];
 }
@@ -82,8 +177,47 @@ function historyToPane(name: string, displayName: string, chatHistory: any[]): S
 }
 
 function buildPaneList(activePanes: SubAgentPane[], historicPanes: SubAgentPane[]): SubAgentPane[] {
-	const activeIds = new Set(activePanes.map((pane) => pane.name));
-	return [...activePanes, ...historicPanes.filter((pane) => !activeIds.has(pane.name))];
+	// Группируем активные panes по name — оставляем только последний запуск,
+	// предыдущие запуски складываем в sessions
+	const grouped = new Map<string, SubAgentPane>();
+	for (const pane of activePanes) {
+		const existing = grouped.get(pane.name);
+		if (!existing || pane.startedAt > existing.startedAt) {
+			if (existing) {
+				// Предыдущий запуск → в sessions нового
+				const prevSession = {
+					task: existing.task,
+					model: existing.model || "",
+					steps: existing.steps,
+					plan: existing.plan ?? [],
+					result: existing.result,
+				};
+				const merged = {
+					...pane,
+					sessions: [...(pane.sessions ?? []), ...(existing.sessions ?? []), prevSession],
+				};
+				grouped.set(pane.name, merged);
+			} else {
+				grouped.set(pane.name, pane);
+			}
+		} else {
+			// Текущий pane старше — добавить как session
+			const prevSession = {
+				task: pane.task,
+				model: pane.model || "",
+				steps: pane.steps,
+				plan: pane.plan ?? [],
+				result: pane.result,
+			};
+			grouped.set(pane.name, {
+				...existing,
+				sessions: [...(existing.sessions ?? []), ...(pane.sessions ?? []), prevSession],
+			});
+		}
+	}
+	const mergedActive = Array.from(grouped.values());
+	const activeNames = new Set(mergedActive.map((pane) => pane.name));
+	return [...mergedActive, ...historicPanes.filter((pane) => !activeNames.has(pane.name))];
 }
 
 function fmt(value: unknown): string {
@@ -97,15 +231,24 @@ function fmt(value: unknown): string {
 }
 
 function StepBlock({ step }: { step: SubAgentStep }) {
+	const [expanded, setExpanded] = useState(false);
 	const hasResult = step.result !== undefined;
 	const st = hasResult ? (step.success ? "success" : "fail") : "pending";
-	const argsStr = step.args ? fmt(step.args) : "";
 	const resultStr = hasResult ? fmt(step.result) : "";
+	const hasDetails = !!(
+		step.thought ||
+		resultStr ||
+		(step.streamLines && step.streamLines.length > 0)
+	);
 
 	return (
-		<div className={`${styles.stepBlock} ${styles[st]}`}>
-			<div className={styles.stepHeader}>
-				<span className={styles.stepNum}>#{step.step}</span>
+		<div className={`${styles.stepBlock} ${styles[st]} ${expanded ? styles.stepExpanded : ""}`}>
+			<div
+				className={styles.stepHeader}
+				onClick={() => hasDetails && setExpanded(!expanded)}
+				style={{ cursor: hasDetails ? "pointer" : "default" }}
+			>
+				<span className={`${styles.stepDot} ${styles[st]}`} />
 				{step.action && (
 					<span className={`${styles.stepAction} ${styles[st]}`}>{step.action}</span>
 				)}
@@ -114,21 +257,31 @@ function StepBlock({ step }: { step: SubAgentStep }) {
 						{step.success ? "ok" : "fail"}
 					</span>
 				)}
+				{!hasResult && <span className={styles.stepSpinner} />}
+				{hasDetails && (
+					<span
+						className={`${styles.stepChevron} ${expanded ? styles.stepChevronOpen : ""}`}
+					>
+						<svg
+							width="10"
+							height="10"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="2.5"
+						>
+							<path d="M9 18l6-6-6-6" />
+						</svg>
+					</span>
+				)}
 			</div>
-			{step.thought && <div className={styles.stepThought}>{step.thought}</div>}
-			{argsStr && !hasResult && (
-				<div className={styles.stepArgs}>
-					<pre className={styles.stepArgsPre}>{argsStr}</pre>
-				</div>
-			)}
-			{step.streamLines && step.streamLines.length > 0 && (
-				<div className={styles.stepStream}>
-					<pre className={styles.stepStreamPre}>{step.streamLines.join("\n")}</pre>
-				</div>
-			)}
-			{hasResult && resultStr && (
-				<div className={styles.stepResult}>
-					<pre className={styles.resultPre}>{resultStr}</pre>
+			{expanded && (
+				<div className={styles.stepBody}>
+					{step.thought && <div className={styles.stepThought}>{step.thought}</div>}
+					{step.streamLines && step.streamLines.length > 0 && (
+						<pre className={styles.stepStreamPre}>{step.streamLines.join("\n")}</pre>
+					)}
+					{hasResult && resultStr && <pre className={styles.resultPre}>{resultStr}</pre>}
 				</div>
 			)}
 		</div>
@@ -237,21 +390,145 @@ function AgentChat({ pane }: { pane: SubAgentPane }) {
 				<SessionBlock key={i} session={session} index={i} allSessions={allSessions} />
 			))}
 
-			{pane.question && (
-				<div className={styles.questionBlock}>
-					<div className={styles.questionLabel}>Вопрос директору</div>
-					<div className={styles.questionText}>{pane.question}</div>
-				</div>
-			)}
-
-			{pane.answer && (
-				<div className={styles.answerBlock}>
-					<div className={styles.answerLabel}>Ответ директора</div>
-					<div className={styles.answerText}>{pane.answer}</div>
-				</div>
-			)}
-
 			<div ref={bottomRef} />
+		</div>
+	);
+}
+
+type ChatTab = "log" | "artifacts" | "timeline";
+
+interface TimelineEvent {
+	time: string;
+	kind: string;
+	label: string;
+	detail?: string;
+}
+
+function buildTimeline(pane: SubAgentPane): TimelineEvent[] {
+	const events: TimelineEvent[] = [];
+	const fmt = (ts: number) =>
+		new Date(ts).toLocaleTimeString("ru-RU", {
+			hour: "2-digit",
+			minute: "2-digit",
+			second: "2-digit",
+		});
+
+	if (pane.startedAt) {
+		events.push({
+			time: fmt(pane.startedAt),
+			kind: "start",
+			label: "Запущен",
+			detail: pane.task,
+		});
+	}
+
+	const allSessions = pane.sessions ?? [];
+	for (const session of allSessions) {
+		for (const step of session.steps) {
+			if (step.action === "ask_director") {
+				events.push({
+					time: "",
+					kind: "question",
+					label: "Вопрос директору",
+					detail: step.args ? JSON.stringify(step.args) : "",
+				});
+			} else if (step.action === "finish_task") {
+				events.push({
+					time: "",
+					kind: "finish",
+					label: "Завершён",
+					detail: String(step.args?.summary ?? ""),
+				});
+			} else if (step.action) {
+				events.push({
+					time: "",
+					kind: step.success === false ? "fail" : "step",
+					label: step.action,
+					detail: step.thought,
+				});
+			}
+		}
+	}
+
+	const liveSteps = pane.steps.filter((s) => !allSessions.flatMap((ss) => ss.steps).includes(s));
+	for (const step of liveSteps) {
+		events.push({
+			time: "",
+			kind: step.success === false ? "fail" : step.result !== undefined ? "step" : "pending",
+			label: step.action ?? "…",
+			detail: step.thought,
+		});
+	}
+
+	if (pane.question) {
+		events.push({
+			time: "",
+			kind: "question",
+			label: "Вопрос директору",
+			detail: pane.question,
+		});
+	}
+	if (pane.status === "paused") {
+		events.push({ time: "", kind: "pause", label: "На паузе" });
+	}
+	if (pane.result && pane.status === "done") {
+		events.push({
+			time: "",
+			kind: "finish",
+			label: "Готово",
+			detail: pane.result.slice(0, 120),
+		});
+	}
+	if (pane.status === "error") {
+		events.push({ time: "", kind: "error", label: "Ошибка", detail: pane.errorMessage });
+	}
+
+	return events;
+}
+
+const TL_COLORS: Record<string, string> = {
+	start: "var(--accent)",
+	step: "rgba(255,255,255,0.2)",
+	fail: "var(--err)",
+	finish: "var(--ok)",
+	question: "var(--warn)",
+	pause: "var(--warn)",
+	error: "var(--err)",
+	pending: "#7eb0ff",
+};
+
+function TimelinePanel({ pane }: { pane: SubAgentPane }) {
+	const events = buildTimeline(pane);
+	if (!events.length) {
+		return (
+			<div className={styles.chatEmpty}>
+				<div>Нет событий</div>
+			</div>
+		);
+	}
+	return (
+		<div className={styles.timeline}>
+			{events.map((ev, i) => (
+				<div key={i} className={styles.tlRow}>
+					<div className={styles.tlLeft}>
+						{ev.time && <span className={styles.tlTime}>{ev.time}</span>}
+						<span
+							className={styles.tlDot}
+							style={{ background: TL_COLORS[ev.kind] ?? "var(--border)" }}
+						/>
+						{i < events.length - 1 && <span className={styles.tlLine} />}
+					</div>
+					<div className={styles.tlContent}>
+						<span
+							className={styles.tlLabel}
+							style={{ color: TL_COLORS[ev.kind] ?? "var(--text-muted)" }}
+						>
+							{ev.label}
+						</span>
+						{ev.detail && <span className={styles.tlDetail}>{ev.detail}</span>}
+					</div>
+				</div>
+			))}
 		</div>
 	);
 }
@@ -260,6 +537,7 @@ export function AgentChatPage({ panes }: AgentChatPageProps) {
 	const { paneId } = useParams<{ paneId: string }>();
 	const navigate = useNavigate();
 	const [historicPanes, setHistoricPanes] = useState<SubAgentPane[]>([]);
+	const [activeTab, setActiveTab] = useState<ChatTab>("log");
 
 	const loadHistory = useCallback(async () => {
 		try {
@@ -281,6 +559,14 @@ export function AgentChatPage({ panes }: AgentChatPageProps) {
 	const clearAgent = useCallback(
 		async (agentName: string) => {
 			await fetch(`/api/agents/${agentName}/clear`, { method: "POST" });
+			await loadHistory();
+		},
+		[loadHistory],
+	);
+
+	const clearAgentRuns = useCallback(
+		async (agentName: string) => {
+			await fetch(`/api/agents/${agentName}/clear-runs`, { method: "POST" });
 			await loadHistory();
 		},
 		[loadHistory],
@@ -362,16 +648,28 @@ export function AgentChatPage({ panes }: AgentChatPageProps) {
 								)}
 								{pane.id.startsWith("history:") &&
 									(pane.status === "done" || pane.status === "error") && (
-										<button
-											className={styles.clearCardBtn}
-											title="Очистить память агента"
-											onClick={(e) => {
-												e.stopPropagation();
-												void clearAgent(pane.name);
-											}}
-										>
-											✕
-										</button>
+										<>
+											<button
+												className={styles.clearCardBtn}
+												title="Очистить runs"
+												onClick={(e) => {
+													e.stopPropagation();
+													void clearAgentRuns(pane.name);
+												}}
+											>
+												🗑
+											</button>
+											<button
+												className={styles.clearCardBtn}
+												title="Очистить память агента"
+												onClick={(e) => {
+													e.stopPropagation();
+													void clearAgent(pane.name);
+												}}
+											>
+												✕
+											</button>
+										</>
 									)}
 							</div>
 						</div>
@@ -430,7 +728,30 @@ export function AgentChatPage({ panes }: AgentChatPageProps) {
 					)}
 				</div>
 
-				{activePane.status === "idle" ? (
+				<div className={styles.tabBar}>
+					<button
+						className={`${styles.tabBtn} ${activeTab === "log" ? styles.tabActive : ""}`}
+						onClick={() => setActiveTab("log")}
+					>
+						Лог
+					</button>
+					<button
+						className={`${styles.tabBtn} ${activeTab === "artifacts" ? styles.tabActive : ""}`}
+						onClick={() => setActiveTab("artifacts")}
+					>
+						Артефакты
+					</button>
+					<button
+						className={`${styles.tabBtn} ${activeTab === "timeline" ? styles.tabActive : ""}`}
+						onClick={() => setActiveTab("timeline")}
+					>
+						Timeline
+					</button>
+				</div>
+
+				{activeTab === "timeline" ? (
+					<TimelinePanel pane={activePane} />
+				) : activeTab === "log" && activePane.status === "idle" ? (
 					<div className={styles.chatEmpty}>
 						<div className={styles.chatEmptyIcon}>◍</div>
 						<div>Агент ещё не запускался</div>
@@ -438,13 +759,15 @@ export function AgentChatPage({ panes }: AgentChatPageProps) {
 							Дай директору задачу, и здесь появится лог
 						</div>
 					</div>
-				) : (
+				) : activeTab === "log" ? (
 					<>
 						<AgentChat pane={activePane} />
 						<div className={styles.readonlyBar}>
 							Только просмотр — писать агентам нельзя
 						</div>
 					</>
+				) : (
+					<ArtifactsPanel runId={activePane.id} />
 				)}
 			</div>
 		</div>

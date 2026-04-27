@@ -22,6 +22,59 @@
 	color: var(--text-muted);
 }
 
+.filters {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	margin-top: 12px;
+}
+
+.searchInput {
+	width: 100%;
+	max-width: 320px;
+	padding: 7px 12px;
+	font-size: 13px;
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	background: rgba(255, 255, 255, 0.04);
+	color: var(--text-main);
+	outline: none;
+	transition: border-color 0.15s;
+}
+.searchInput:focus {
+	border-color: var(--accent);
+}
+.searchInput::placeholder {
+	color: var(--text-muted);
+	opacity: 0.6;
+}
+
+.agentTabs {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.agentTab {
+	padding: 4px 12px;
+	font-size: 12px;
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	background: transparent;
+	color: var(--text-muted);
+	cursor: pointer;
+	transition: all 0.15s;
+}
+.agentTab:hover {
+	background: rgba(255, 255, 255, 0.06);
+	color: var(--text-main);
+}
+.agentTabActive {
+	background: rgba(255, 255, 255, 0.08);
+	color: var(--text-main);
+	border-color: var(--accent);
+}
+
 .body {
 	flex: 1;
 	overflow-y: auto;
@@ -31,8 +84,13 @@
 	gap: 32px;
 }
 
-.body::-webkit-scrollbar { width: 6px; }
-.body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.body::-webkit-scrollbar {
+	width: 6px;
+}
+.body::-webkit-scrollbar-thumb {
+	background: var(--border);
+	border-radius: 3px;
+}
 
 .agentSection {
 	display: flex;
@@ -64,7 +122,7 @@
 .agentCount {
 	font-size: 11px;
 	color: var(--text-muted);
-	background: rgba(255,255,255,0.06);
+	background: rgba(255, 255, 255, 0.06);
 	padding: 1px 7px;
 	border-radius: 10px;
 }
@@ -78,14 +136,16 @@
 .toolCard {
 	border: 1px solid var(--border);
 	border-radius: 12px;
-	background: rgba(255,255,255,0.025);
+	background: rgba(255, 255, 255, 0.025);
 	padding: 14px 16px;
-	transition: border-color 0.15s, background 0.15s;
+	transition:
+		border-color 0.15s,
+		background 0.15s;
 }
 
 .toolCard:hover {
-	border-color: rgba(255,255,255,0.18);
-	background: rgba(255,255,255,0.04);
+	border-color: rgba(255, 255, 255, 0.18);
+	background: rgba(255, 255, 255, 0.04);
 }
 
 .cardHead {
@@ -112,10 +172,23 @@
 	flex-shrink: 0;
 }
 
-.riskSafe { background: rgba(51,209,122,0.15); color: var(--ok); }
-.riskMedium { background: rgba(246,211,101,0.15); color: var(--warn); }
-.riskHigh { background: rgba(255,123,114,0.15); color: var(--err); }
-.riskCritical { background: rgba(255,123,114,0.2); color: var(--err); border: 1px solid rgba(255,123,114,0.4); }
+.riskSafe {
+	background: rgba(51, 209, 122, 0.15);
+	color: var(--ok);
+}
+.riskMedium {
+	background: rgba(246, 211, 101, 0.15);
+	color: var(--warn);
+}
+.riskHigh {
+	background: rgba(255, 123, 114, 0.15);
+	color: var(--err);
+}
+.riskCritical {
+	background: rgba(255, 123, 114, 0.2);
+	color: var(--err);
+	border: 1px solid rgba(255, 123, 114, 0.4);
+}
 
 .toolDesc {
 	font-size: 12px;
@@ -132,15 +205,290 @@
 
 .toolArg {
 	font-size: 11px;
-	color: rgba(126,176,255,0.8);
-	background: rgba(126,176,255,0.08);
-	border: 1px solid rgba(126,176,255,0.15);
+	color: rgba(126, 176, 255, 0.8);
+	background: rgba(126, 176, 255, 0.08);
+	border: 1px solid rgba(126, 176, 255, 0.15);
 	padding: 1px 7px;
 	border-radius: 4px;
 }
 
 .toolArgOpt {
 	color: var(--text-muted);
-	background: rgba(255,255,255,0.04);
+	background: rgba(255, 255, 255, 0.04);
 	border-color: var(--border);
+}
+
+/* Новые стили для редактора инструментов */
+.controls {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 12px;
+	margin-top: 12px;
+	align-items: center;
+}
+
+.selectWrapper {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.label {
+	font-size: 13px;
+	color: var(--text-muted);
+	font-weight: 500;
+}
+
+.select {
+	padding: 7px 12px;
+	font-size: 13px;
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	background: rgba(255, 255, 255, 0.04);
+	color: var(--text-main);
+	outline: none;
+	min-width: 160px;
+	cursor: pointer;
+}
+
+.select:focus {
+	border-color: var(--accent);
+}
+
+.actions {
+	display: flex;
+	gap: 8px;
+	margin-left: auto;
+}
+
+.actionBtn {
+	padding: 7px 14px;
+	font-size: 12px;
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	background: rgba(255, 255, 255, 0.04);
+	color: var(--text-main);
+	cursor: pointer;
+	transition: all 0.15s;
+}
+
+.actionBtn:hover {
+	background: rgba(255, 255, 255, 0.08);
+	border-color: rgba(255, 255, 255, 0.2);
+}
+
+.saveBtn {
+	padding: 7px 16px;
+	font-size: 12px;
+	border: 1px solid var(--accent);
+	border-radius: 8px;
+	background: var(--accent);
+	color: white;
+	cursor: pointer;
+	transition: all 0.15s;
+	font-weight: 500;
+}
+
+.saveBtn:hover:not(:disabled) {
+	background: #0c8c6a;
+}
+
+.saveBtn:disabled {
+	opacity: 0.6;
+	cursor: not-allowed;
+}
+
+.saveBtn.saved {
+	background: var(--ok);
+	border-color: var(--ok);
+}
+
+.agentInfo {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 12px 28px;
+	border-bottom: 1px solid var(--border);
+	background: rgba(255, 255, 255, 0.02);
+}
+
+.modelSelect {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-left: auto;
+}
+
+.empty {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 60px 20px;
+	color: var(--text-muted);
+	font-size: 14px;
+	text-align: center;
+}
+
+/* Toggle switch */
+.toggle {
+	position: relative;
+	display: inline-block;
+	width: 40px;
+	height: 22px;
+	flex-shrink: 0;
+}
+
+.toggle input {
+	opacity: 0;
+	width: 0;
+	height: 0;
+}
+
+.toggleSlider {
+	position: absolute;
+	cursor: pointer;
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	background-color: rgba(255, 255, 255, 0.1);
+	transition: 0.3s;
+	border-radius: 22px;
+}
+
+.toggleSlider:before {
+	position: absolute;
+	content: "";
+	height: 16px;
+	width: 16px;
+	left: 3px;
+	bottom: 3px;
+	background-color: white;
+	transition: 0.3s;
+	border-radius: 50%;
+}
+
+.toggle input:checked + .toggleSlider {
+	background-color: var(--accent);
+}
+
+.toggle input:checked + .toggleSlider:before {
+	transform: translateX(18px);
+}
+
+.toolDisabled {
+	opacity: 0.5;
+	background: rgba(255, 255, 255, 0.01);
+}
+
+.toolRequired {
+	border-color: rgba(16, 163, 127, 0.2);
+}
+
+.savingIndicator {
+	font-size: 12px;
+	color: var(--text-muted);
+	opacity: 0.6;
+	align-self: center;
+}
+
+.toolClickable {
+	cursor: pointer;
+}
+
+.toolClickable:hover {
+	border-color: rgba(255, 255, 255, 0.15);
+	background: rgba(255, 255, 255, 0.04);
+}
+
+.lockIcon {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 18px;
+	flex-shrink: 0;
+	color: var(--accent);
+	opacity: 0.7;
+}
+
+/* Кнопка добавления агента */
+.addAgentBtn {
+	padding: 7px 14px;
+	font-size: 12px;
+	border: 1px dashed rgba(255, 255, 255, 0.25);
+	border-radius: 8px;
+	background: transparent;
+	color: var(--text-muted);
+	cursor: pointer;
+	transition: all 0.15s;
+	white-space: nowrap;
+}
+
+.addAgentBtn:hover {
+	border-color: var(--accent);
+	color: var(--accent);
+	background: rgba(16, 163, 127, 0.08);
+}
+
+/* Модальное окно */
+.modalOverlay {
+	position: fixed;
+	inset: 0;
+	background: rgba(0, 0, 0, 0.6);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	z-index: 200;
+}
+
+.modal {
+	background: #1a1a1a;
+	border: 1px solid var(--border);
+	border-radius: 14px;
+	padding: 28px 32px;
+	width: 380px;
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+	box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+}
+
+.modalTitle {
+	margin: 0;
+	font-size: 16px;
+	font-weight: 600;
+}
+
+.modalField {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.modalInput {
+	padding: 8px 12px;
+	font-size: 13px;
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	background: rgba(255, 255, 255, 0.04);
+	color: var(--text-main);
+	outline: none;
+	transition: border-color 0.15s;
+}
+
+.modalInput:focus {
+	border-color: var(--accent);
+}
+
+.modalInput::placeholder {
+	color: var(--text-muted);
+	opacity: 0.5;
+}
+
+.modalActions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+	margin-top: 4px;
 }

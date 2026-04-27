@@ -39,10 +39,34 @@ class AgentWebHandler(BaseHTTPRequestHandler):
             self._send_json(routes.get_history())
         elif self.path == "/api/runs":
             self._send_json(routes.get_active_runs())
+        elif self.path == "/api/supervisor/alerts":
+            self._send_json(routes.get_supervisor_alerts())
+        elif self.path.startswith("/api/bus"):
+            self._send_json(routes.get_bus_history())
+        elif self.path == "/api/crashes":
+            self._send_json(routes.get_crash_reports())
+        elif self.path.startswith("/api/crashes/"):
+            fname = self.path[len("/api/crashes/"):]
+            self._send_json(routes.get_crash_report(fname))
+        elif self.path.startswith("/api/runs/") and "/artifacts" in self.path:
+            self._handle_artifacts_get(routes)
+        elif self.path.startswith("/api/runs/") and self.path != "/api/runs/":
+            run_id = self.path[len("/api/runs/"):].strip("/")
+            self._send_json(routes.get_run_by_id(run_id))
         elif self.path == "/api/agents/history":
             self._send_json(routes.get_agents_history())
         elif self.path == "/api/models":
             self._send_json(routes.get_models())
+        elif self.path == "/api/available-models":
+            self._send_json(routes.get_available_models())
+        elif self.path == "/api/ollama-models":
+            self._send_json(routes.get_ollama_models())
+        elif self.path == "/api/tools-config":
+            self._send_json(routes.get_tools_config())
+        elif self.path == "/api/agents-config":
+            self._send_json(routes.get_agents_config())
+        elif self.path == "/api/user-profile":
+            self._send_json(routes.get_user_profile())
         else:
             self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
 
@@ -94,12 +118,42 @@ class AgentWebHandler(BaseHTTPRequestHandler):
             payload = self._read_json_body()
             if payload is not None:
                 self._send_json(routes.set_models(payload))
+        elif self.path == "/api/tools-config":
+            payload = self._read_json_body()
+            if payload is not None:
+                result = routes.set_tools_config(payload)
+                if isinstance(result, tuple):
+                    self._send_json(result[0], status=result[1])
+                else:
+                    self._send_json(result)
+        elif self.path == "/api/agents-config":
+            payload = self._read_json_body()
+            if payload is not None:
+                result = routes.set_agents_config(payload)
+                if isinstance(result, tuple):
+                    self._send_json(result[0], status=result[1])
+                else:
+                    self._send_json(result)
+        elif self.path == "/api/user-profile":
+            payload = self._read_json_body()
+            if payload is not None:
+                result = routes.set_user_profile(payload)
+                if isinstance(result, tuple):
+                    self._send_json(result[0], status=result[1])
+                else:
+                    self._send_json(result)
         elif self.path == "/api/open-path":
             payload = self._read_json_body()
             if payload is not None:
                 self._send_json(routes.open_path(payload))
         elif self.path == "/api/agents/clear/all":
             self._send_json(routes.clear_all_agents_memory())
+        elif self.path.startswith("/api/agents/") and self.path.endswith("/clear-runs"):
+            agent_name = self.path[len("/api/agents/"):-len("/clear-runs")]
+            if agent_name:
+                self._send_json(routes.clear_agent_runs(agent_name))
+            else:
+                self._send_json({"error": "agent name missing"}, status=HTTPStatus.BAD_REQUEST)
         elif self.path.startswith("/api/agents/") and self.path.endswith("/clear"):
             agent_name = self.path[len("/api/agents/"):-len("/clear")]
             if agent_name:
@@ -110,6 +164,21 @@ class AgentWebHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
 
     # --- Приватные обработчики ---
+
+    def _handle_artifacts_get(self, routes: Routes) -> None:
+        # /api/runs/{run_id}/artifacts            — список артефактов
+        # /api/runs/{run_id}/artifacts/{name}     — конкретный артефакт
+        path = self.path[len("/api/runs/"):]  # "run_id/artifacts" или "run_id/artifacts/name"
+        parts = path.split("/artifacts", 1)
+        run_id = parts[0].strip("/")
+        rest = parts[1].strip("/") if len(parts) > 1 else ""
+        if not run_id:
+            self._send_json({"error": "run_id missing"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        if rest:
+            self._send_json(routes.get_run_artifact(run_id, rest))
+        else:
+            self._send_json(routes.get_run_artifacts(run_id))
 
     def _handle_run(self, routes: Routes) -> None:
         payload = self._read_json_body()

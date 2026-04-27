@@ -1,17 +1,40 @@
 import styles from "./NavBar.module.css";
 
-export type NavPage = "chat" | "agents" | "tools" | "settings";
+export type NavPage = "chat" | "agents" | "tools" | "settings" | "runs" | "bus" | "crashes";
 
 interface NavBarProps {
 	activePage: NavPage;
 	onNavigate: (page: NavPage) => void;
 	hasActiveAgents: boolean;
+	alertCount?: number;
 }
 
-export function NavBar({ activePage, onNavigate, hasActiveAgents }: NavBarProps) {
+export function NavBar({ activePage, onNavigate, hasActiveAgents, alertCount = 0 }: NavBarProps) {
 	return (
 		<nav className={styles.navbar}>
 			<div className={styles.logo}>V</div>
+
+			<button
+				className={`${styles.navBtn} ${activePage === "runs" ? styles.active : ""}`}
+				onClick={() => onNavigate("runs")}
+				title="Runs Dashboard"
+			>
+				<svg
+					width="20"
+					height="20"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="2"
+					strokeLinecap="round"
+					strokeLinejoin="round"
+				>
+					<rect x="3" y="3" width="18" height="18" rx="2" />
+					<line x1="3" y1="9" x2="21" y2="9" />
+					<line x1="3" y1="15" x2="21" y2="15" />
+					<line x1="9" y1="9" x2="9" y2="21" />
+				</svg>
+			</button>
 
 			<button
 				className={`${styles.navBtn} ${activePage === "chat" ? styles.active : ""}`}
@@ -38,6 +61,9 @@ export function NavBar({ activePage, onNavigate, hasActiveAgents }: NavBarProps)
 				title="Агенты"
 			>
 				{hasActiveAgents && <span className={styles.badge} />}
+				{alertCount > 0 && (
+					<span className={styles.alertBadge}>{alertCount > 9 ? "9+" : alertCount}</span>
+				)}
 				<svg
 					width="20"
 					height="20"
@@ -69,6 +95,46 @@ export function NavBar({ activePage, onNavigate, hasActiveAgents }: NavBarProps)
 					strokeLinejoin="round"
 				>
 					<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+				</svg>
+			</button>
+
+			<button
+				className={`${styles.navBtn} ${activePage === "bus" ? styles.active : ""}`}
+				onClick={() => onNavigate("bus")}
+				title="MessageBus"
+			>
+				<svg
+					width="20"
+					height="20"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="2"
+					strokeLinecap="round"
+					strokeLinejoin="round"
+				>
+					<polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+				</svg>
+			</button>
+
+			<button
+				className={`${styles.navBtn} ${activePage === "crashes" ? styles.active : ""}`}
+				onClick={() => onNavigate("crashes")}
+				title="Crash Reports"
+			>
+				<svg
+					width="20"
+					height="20"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="2"
+					strokeLinecap="round"
+					strokeLinejoin="round"
+				>
+					<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+					<line x1="12" y1="9" x2="12" y2="13" />
+					<line x1="12" y1="17" x2="12.01" y2="17" />
 				</svg>
 			</button>
 

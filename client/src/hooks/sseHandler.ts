@@ -69,7 +69,13 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 			s.setLiveThought("");
 			s.setEvents((prev) => {
 				const next = [...prev];
-				if (thought) next.push({ type: "thought", role: "assistant", thought, step });
+				if (thought && p?.thought_source === "native")
+					next.push({
+						type: "thought",
+						role: "assistant",
+						thought,
+						step,
+					});
 				if (action && action !== "finish_task") {
 					next.push({ type: "tool_use", role: "assistant", action, result: args, step });
 					s.setLiveStatus(`Агент использует: ${action}`);
@@ -119,6 +125,19 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 			} else {
 				s.setLiveStatus("Формируется ответ...");
 			}
+			break;
+		}
+
+		case "agent_warning": {
+			console.warn("[agent_warning]", p?.message);
+			s.setEvents((prev) => [
+				...prev,
+				{
+					type: "message",
+					role: "assistant",
+					content: `⚠ ${p?.message || "Предупреждение"}`,
+				},
+			]);
 			break;
 		}
 
@@ -199,10 +218,18 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 		case "__final__":
 			s.setSessionFinished(true);
 			s.setLiveThought("");
-			s.setLiveStatus("");
 			s.setCurrentAnswer("");
 			s.setConfirmationRequest(null);
 			s.setIsRunning(false);
+			if (p?.error) {
+				s.setLiveStatus("");
+				s.setEvents((prev) => [
+					...prev,
+					{ type: "message", role: "assistant", content: `⚠️ Ошибка: ${p.error}` },
+				]);
+			} else {
+				s.setLiveStatus("");
+			}
 			break;
 
 		case "intermediate_message":
@@ -269,12 +296,13 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 				prev.map((pane) => {
 					if (pane.id !== run_id) return pane;
 					const i = pane.steps.findIndex((item) => item.step === step);
+					const newStep = { step, thought, action, args };
 					const steps =
 						i !== -1
 							? pane.steps.map((item, idx) =>
-									idx === i ? { ...item, thought, action, args } : item,
+									idx === i ? { ...item, ...newStep } : item,
 								)
-							: [...pane.steps, { step, thought, action, args }];
+							: [...pane.steps, newStep];
 					return { ...pane, steps };
 				}),
 			);
@@ -337,6 +365,10 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 						...pane,
 						status: cancelled ? "cancelled" : success ? "done" : "error",
 						result: resultStr,
+						errorMessage:
+							!success && !cancelled
+								? pane.errorMessage || resultStr
+								: pane.errorMessage,
 						sessions: [...(pane.sessions ?? []), finishedSession],
 					};
 				}),
@@ -356,16 +388,77 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 			if (p?.run_id) s.updatePane(p.run_id, { status: "running" });
 			break;
 
-		case "sub_agent_error":
-			if (p?.run_id) s.updatePane(p.run_id, { status: "error" });
+		case "sub_agent_error": {
+			if (!p?.run_id) break;
+			const errMsg = p?.message || "Неизвестная ошибка";
+			s.setSubAgentPanes((prev) =>
+				prev.map((pane) => {
+					if (pane.id !== p.run_id) return pane;
+					const errStep = {
+						step: p.step ?? pane.steps.length + 1,
+						action: "error",
+						result: { error: errMsg },
+						success: false,
+					};
+					return { ...pane, errorMessage: errMsg, steps: [...pane.steps, errStep] };
+				}),
+			);
 			break;
+		}
+
+		case "sub_agent_warning": {
+			console.warn("[sub_agent_warning]", p?.message);
+			if (!p?.run_id) break;
+			const warnMsg = p?.message || "Предупреждение";
+			s.setSubAgentPanes((prev) =>
+				prev.map((pane) => {
+					if (pane.id !== p.run_id) return pane;
+					const warnStep = {
+						step: p.step ?? pane.steps.length + 1,
+						action: "warning",
+						result: { warning: warnMsg },
+						success: true,
+					};
+					return { ...pane, steps: [...pane.steps, warnStep] };
+				}),
+			);
+			break;
+		}
 
 		case "sub_agent_question":
-			if (p?.run_id) s.updatePane(p.run_id, { question: p.question });
+			if (p?.run_id) {
+				s.updatePane(p.run_id, { question: p.question });
+				s.setSubAgentPanes((prev) =>
+					prev.map((pane) => {
+						if (pane.id !== p.run_id) return pane;
+						const qStep = {
+							step: pane.steps.length + 1,
+							action: "ask_director_question",
+							result: { question: p.question },
+							success: true,
+						};
+						return { ...pane, steps: [...pane.steps, qStep] };
+					}),
+				);
+			}
 			break;
 
 		case "sub_agent_answer":
-			if (p?.run_id) s.updatePane(p.run_id, { answer: p.answer });
+			if (p?.run_id) {
+				s.updatePane(p.run_id, { answer: p.answer });
+				s.setSubAgentPanes((prev) =>
+					prev.map((pane) => {
+						if (pane.id !== p.run_id) return pane;
+						const aStep = {
+							step: pane.steps.length + 1,
+							action: "director_answer",
+							result: { answer: p.answer },
+							success: true,
+						};
+						return { ...pane, steps: [...pane.steps, aStep] };
+					}),
+				);
+			}
 			break;
 	}
 }

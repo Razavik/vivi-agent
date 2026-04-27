@@ -21,6 +21,9 @@
 .panel.paused {
 	border-color: rgba(246, 211, 101, 0.4);
 }
+.panel.interrupted {
+	border-color: rgba(255, 159, 67, 0.4);
+}
 
 .header {
 	display: flex;
@@ -55,6 +58,10 @@
 .dot.paused {
 	background: var(--warn);
 	box-shadow: 0 0 4px var(--warn);
+}
+.dot.interrupted {
+	background: #ff9f43;
+	box-shadow: 0 0 4px rgba(255, 159, 67, 0.45);
 }
 .dot.error {
 	background: var(--err);

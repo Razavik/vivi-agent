@@ -14,7 +14,7 @@ export function ThoughtBlockInThread({
 	streaming = false,
 	textRef,
 }: ThoughtBlockInThreadProps) {
-	const [isOpen, setIsOpen] = useState(streaming);
+	const [isOpen, setIsOpen] = useState(true);
 
 	// Для не-стриминговых блоков — обновляем через React
 	// Для стриминговых — текст пишется напрямую в DOM через textRef из useAgent
@@ -27,8 +27,8 @@ export function ThoughtBlockInThread({
 
 	return (
 		<div className={styles.messageThoughtWrap}>
-			<button className={styles.messageThoughtToggle} onClick={() => setIsOpen(!isOpen)}>
-				<span>{streaming ? "Размышляю..." : "Размышление"}</span>
+			<button className={styles.nativeToggle} onClick={() => setIsOpen(!isOpen)}>
+				<span>{streaming ? "Думаю..." : "Thinking"}</span>
 				<span className={`${styles.thoughtIcon} ${isOpen ? styles.open : ""}`}>
 					<svg
 						width="12"

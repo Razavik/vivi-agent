@@ -1,6 +1,6 @@
 .liveStatus {
 	width: 90%;
-	max-width: 850px;
+	max-width: 750px;
 	display: flex;
 	align-items: center;
 	gap: 10px;
@@ -10,7 +10,7 @@
 	min-height: 18px;
 	background-color: var(--bg-input);
 	border-radius: 10px 10px 0 0;
-	padding:3px 10px;
+	padding: 3px 10px;
 }
 
 .hidden {

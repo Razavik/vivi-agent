@@ -15,6 +15,7 @@ export function useAgent() {
 	const [subAgentPanes, setSubAgentPanes] = useState<SubAgentPane[]>([]);
 	const [liveThought, setLiveThought] = useState("");
 	const sessionFinishedRef = useRef(false);
+	const eventsRef = useRef<ChatEvent[]>([]);
 
 	const updatePane = useCallback((id: string, patch: Partial<SubAgentPane>) => {
 		setSubAgentPanes((prev) => {
@@ -103,6 +104,7 @@ export function useAgent() {
 					}
 				});
 			}
+			eventsRef.current = historyEvents;
 			setEvents(historyEvents);
 		} catch (e) {
 			console.error("Ошибка загрузки истории:", e);
@@ -168,108 +170,109 @@ export function useAgent() {
 	// Запуск задачи через WebSocket
 	const wsRef = useRef<WebSocket | null>(null);
 
-	const runTask = useCallback(
-		async (task: string, images: string[] = []) => {
-			if (!task.trim() && images.length === 0) return;
+	const runTask = useCallback(async (task: string, images: string[] = []) => {
+		if (!task.trim() && images.length === 0) return;
 
-			// Закрываем предыдущее соединение
-			if (wsRef.current) {
-				wsRef.current.close();
-				wsRef.current = null;
-			}
+		// Закрываем предыдущее соединение
+		if (wsRef.current) {
+			wsRef.current.close();
+			wsRef.current = null;
+		}
 
-			setIsRunning(true);
-			sessionFinishedRef.current = false;
-			setLiveStatus("Агент думает...");
-			setCurrentAnswer("");
-			setSubAgentPanes([]);
-			setEvents((prev) => [
-				...prev,
-				{
-					type: "message",
-					role: "user",
-					content: task,
-					images: images.length > 0 ? images : undefined,
-				},
-			]);
+		setIsRunning(true);
+		sessionFinishedRef.current = false;
+		setLiveStatus("Агент думает...");
+		setCurrentAnswer("");
+		setSubAgentPanes([]);
+		const userMsg: ChatEvent = {
+			type: "message",
+			role: "user",
+			content: task,
+			images: images.length > 0 ? images : undefined,
+		};
+		setEvents((prev) => {
+			const next = [...prev, userMsg];
+			eventsRef.current = next;
+			return next;
+		});
 
-			let lastAnswer = "";
-			const setters: SseSetters = {
-				setEvents,
-				setLiveThought,
-				setLiveStatus,
-				setCurrentAnswer: (v: any) => {
-					lastAnswer = typeof v === "string" ? v : lastAnswer;
-					setCurrentAnswer(v);
-				},
-				setIsRunning,
-				setConfirmationRequest,
-				setContextTokens,
-				setSubAgentPanes,
-				updatePane,
-				getCurrentAnswer: () => lastAnswer,
-				isSessionFinished: () => sessionFinishedRef.current,
-				setSessionFinished: (value: boolean) => {
-					sessionFinishedRef.current = value;
-				},
+		let lastAnswer = "";
+		const setters: SseSetters = {
+			setEvents,
+			setLiveThought,
+			setLiveStatus,
+			setCurrentAnswer: (v: any) => {
+				lastAnswer = typeof v === "string" ? v : lastAnswer;
+				setCurrentAnswer(v);
+			},
+			setIsRunning,
+			setConfirmationRequest,
+			setContextTokens,
+			setSubAgentPanes,
+			updatePane,
+			getCurrentAnswer: () => lastAnswer,
+			isSessionFinished: () => sessionFinishedRef.current,
+			setSessionFinished: (value: boolean) => {
+				sessionFinishedRef.current = value;
+			},
+		};
+
+		return new Promise<void>((resolve) => {
+			// В dev — напрямую на WS-сервер, в prod — через тот же хост
+			const wsUrl = import.meta.env.DEV
+				? "ws://127.0.0.1:8001"
+				: `ws://${window.location.host}/ws`;
+			const ws = new WebSocket(wsUrl);
+			wsRef.current = ws;
+
+			ws.onopen = () => {
+				const allMsgs = eventsRef.current.filter((e) => e.type === "message");
+				const historyToSend = allMsgs
+					.slice(0, -1)
+					.map((e) => ({ role: e.role, content: e.content }));
+				ws.send(
+					JSON.stringify({
+						action: "run",
+						task,
+						images: images.length > 0 ? images : undefined,
+						chat_history: historyToSend,
+					}),
+				);
 			};
 
-			return new Promise<void>((resolve) => {
-				// В dev — напрямую на WS-сервер, в prod — через тот же хост
-				const wsUrl = import.meta.env.DEV
-					? "ws://127.0.0.1:8001"
-					: `ws://${window.location.host}/ws`;
-				const ws = new WebSocket(wsUrl);
-				wsRef.current = ws;
+			ws.onmessage = (msg) => {
+				try {
+					const event = JSON.parse(msg.data);
+					handleSseEvent(event, setters);
+				} catch (e) {
+					console.error("[WS] Ошибка парсинга:", e, msg.data);
+				}
+			};
 
-				ws.onopen = () => {
-					ws.send(
-						JSON.stringify({
-							action: "run",
-							task,
-							images: images.length > 0 ? images : undefined,
-							chat_history: events
-								.filter((e) => e.type === "message")
-								.map((e) => ({ role: e.role, content: e.content })),
-						}),
-					);
-				};
+			ws.onerror = (err) => {
+				console.error("[WS] Ошибка соединения:", err);
+				setEvents((prev) => [
+					...prev,
+					{
+						type: "message",
+						role: "assistant",
+						content: "Ошибка соединения с сервером",
+					},
+				]);
+				setIsRunning(false);
+				setLiveStatus("");
+				resolve();
+			};
 
-				ws.onmessage = (msg) => {
-					try {
-						const event = JSON.parse(msg.data);
-						handleSseEvent(event, setters);
-					} catch (e) {
-						console.error("[WS] Ошибка парсинга:", e, msg.data);
-					}
-				};
-
-				ws.onerror = (err) => {
-					console.error("[WS] Ошибка соединения:", err);
-					setEvents((prev) => [
-						...prev,
-						{
-							type: "message",
-							role: "assistant",
-							content: "Ошибка соединения с сервером",
-						},
-					]);
-					setIsRunning(false);
-					setLiveStatus("");
-					resolve();
-				};
-
-				ws.onclose = () => {
-					wsRef.current = null;
-					setIsRunning(false);
-					setLiveStatus("");
-					setConfirmationRequest(null);
-					resolve();
-				};
-			});
-		},
-		[events],
-	);
+			ws.onclose = () => {
+				wsRef.current = null;
+				setIsRunning(false);
+				setLiveStatus("");
+				setConfirmationRequest(null);
+				resolve();
+			};
+		});
+	}, []);
 
 	// Отмена текущего запроса
 	const cancelTask = useCallback(async () => {

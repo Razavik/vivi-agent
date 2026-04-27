@@ -34,7 +34,10 @@ class AgentRuntime:
         user_name: str = "Пользователь",
         available_agents: list[dict[str, str]] | None = None,
         get_active_runs: Callable[[], list[dict[str, Any]]] | None = None,
+        get_supervisor_observations: Callable[[], list[dict[str, Any]]] | None = None,
+        settings: Any | None = None,
     ) -> None:
+        from src.infra.config import Settings
         self.client = client
         self.registry = registry
         self.validator = validator
@@ -50,12 +53,16 @@ class AgentRuntime:
         self.event_sink = event_sink
         self.cancelled = False
         self.get_active_runs = get_active_runs
+        self.get_supervisor_observations = get_supervisor_observations
+        self._current_state: SessionState | None = None
+        self.settings = settings
 
     def cancel(self) -> None:
         self.cancelled = True
 
     def run(self, user_goal: str, chat_history: list[dict[str, str]] | None = None, images: list[str] | None = None) -> str:
         state = SessionState(user_goal=user_goal)
+        self._current_state = state
         current_step: ActionStep | None = None
         memory = self.memory_store.load()
         for item in memory.get("chat_history", []):
@@ -91,8 +98,10 @@ class AgentRuntime:
                 if isinstance(role, str) and isinstance(content, str):
                     state.chat_history.append(ChatMessage(role=role, content=content))
         state.add_chat_message("user", user_goal)
+        base_history: list[dict] = self.memory_store.load().get("chat_history", [])
         self.logger.write("session_started", {"goal": user_goal})
         self._emit("session_started", {"goal": user_goal})
+        last_actions: list[tuple[str, str]] = []  # для loop detection директора
         for step_number in range(1, self.max_steps + 1):
             # Если finish_task уже был вызван — принудительно завершаем
             for obs in reversed(state.observations):
@@ -106,30 +115,54 @@ class AgentRuntime:
                 raise AgentError("Задача была прервана пользователем")
             try:
                 active_runs = self.get_active_runs() if self.get_active_runs else []
-                messages, token_count = build_messages(state, self.registry.describe_all(), self.workspace_root, self.user_name, self.available_agents, images=images if step_number == 1 else None, active_runs=active_runs)
+                supervisor_obs = self.get_supervisor_observations() if self.get_supervisor_observations else []
+                messages, token_count = build_messages(state, self.registry.describe_all(), self.workspace_root, self.user_name, self.available_agents, images=images if step_number == 1 else None, active_runs=active_runs, supervisor_observations=supervisor_obs, user_profile=self.settings.user_profile)
                 self._emit("context_tokens", {"count": token_count})
                 streamed_text = ""
-                last_thought = ""
 
                 def on_stream_content(raw_content: str) -> None:
-                    nonlocal streamed_text, last_thought
-                    # Стримим thought сразу как он появляется
-                    partial_thought = self._extract_partial_json_string_field(raw_content, "thought")
-                    if partial_thought and partial_thought != last_thought:
-                        last_thought = partial_thought
-                        self._emit("thought_stream", {"thought": partial_thought})
+                    nonlocal streamed_text
                     action = self._extract_complete_json_string_field(raw_content, "action")
                     if action != "finish_task":
                         return
                     # summary лежит внутри args.summary
-                    args_match = re.search(r'"args"\s*:\s*\{[^}]*"summary"\s*:\s*"((?:\\.|[^"\\])*)', raw_content, re.DOTALL)
+                    args_match = re.search(r'"args"\s*:\s*\{.*?"summary"\s*:\s*"((?:\\.|[^"\\])*)', raw_content, re.DOTALL)
                     summary = self._decode_json_string_fragment(args_match.group(1)) if args_match else None
                     if not summary or summary == streamed_text:
                         return
                     streamed_text = summary
                     self._emit("assistant_stream", {"content": summary})
 
-                current_step = self.client.plan_next_step(messages, on_stream_content=on_stream_content)
+                def on_thinking(thinking_text: str) -> None:
+                    self._emit("thought_stream", {"thought": thinking_text, "source": "native"})
+
+                def on_retry_error(attempt: int, max_retries: int, error_msg: str) -> None:
+                    self._emit("agent_warning", {
+                        "step": step_number,
+                        "message": f"Retry {attempt}/{max_retries}: {error_msg}",
+                    })
+
+                current_step = self.client.plan_next_step(
+                    messages,
+                    on_stream_content=on_stream_content,
+                    on_thinking=on_thinking,
+                    on_retry_error=on_retry_error,
+                )
+
+                # Используем точные токены из ответа модели если доступны
+                llm_resp = getattr(current_step, "_llm_response", None)
+                if llm_resp is not None:
+                    if llm_resp.eval_count:
+                        actual_tokens = llm_resp.prompt_eval_count + llm_resp.eval_count
+                        self._emit("context_tokens", {"count": actual_tokens})
+                    if llm_resp.done_reason == "length":
+                        self._emit("agent_error", {
+                            "step": step_number,
+                            "message": f"Ответ обрезан: достигнут лимит контекста ({self.client.num_ctx} токенов). Увеличь OLLAMA_NUM_CTX.",
+                        })
+
+                native_thought = llm_resp.thinking if llm_resp is not None else None
+
                 if current_step.plan:
                     plan_items = [
                         PlanItem(id=item.id, content=item.content, status=item.status)
@@ -140,20 +173,51 @@ class AgentRuntime:
                         "plan": state.compact_plan(),
                         "step": step_number,
                     })
-                self.logger.write("llm_step", asdict(current_step))
-                self._emit("llm_step", {"step": step_number, **asdict(current_step)})
+                step_dict = {k: v for k, v in asdict(current_step).items() if not k.startswith("_")}
+                if native_thought:
+                    step_dict["thought"] = native_thought
+                    step_dict["thought_source"] = "native"
+                else:
+                    step_dict.pop("thought", None)
+                self.logger.write("llm_step", step_dict)
+                self._emit("llm_step", {"step": step_number, **step_dict})
+
+                # Loop detection: одно и то же действие 3 раза подряд — предупреждение модели
+                action_key = (current_step.action, json.dumps(current_step.args, sort_keys=True, default=str))
+                last_actions.append(action_key)
+                if len(last_actions) > 4:
+                    last_actions.pop(0)
+                if len(last_actions) >= 3 and len(set(last_actions[-3:])) == 1:
+                    loop_msg = (
+                        f"Зацикливание директора: действие '{current_step.action}' повторилось 3 раза подряд. "
+                        f"Используй другой инструмент, другие аргументы или заверши задачу через finish_task."
+                    )
+                    self.logger.write("loop_detected", {"step": step_number, "action": current_step.action})
+                    self._emit("loop_detected", {"step": step_number, "action": current_step.action, "message": loop_msg})
+                    state.add_observation(Observation(
+                        step=step_number,
+                        action="error",
+                        result={"error": loop_msg},
+                        success=False,
+                        thought=current_step.thought,
+                    ))
+                    last_actions.clear()
+                    current_step = None
+                    continue
+
                 summary = self._execute_step(current_step, step_number, state)
                 if summary is not None:
                     state.add_chat_message(
                         "assistant",
                         summary,
-                        thought=current_step.thought,
+                        thought=native_thought or current_step.thought,
                         plan=state.plan,
                     )
                     self.memory_store.append_session(state.chat_history, state.observations)
                     self.logger.write("session_finished", {"summary": summary})
                     self._emit("session_finished", {"summary": summary})
                     return summary
+                self.memory_store.write_snapshot(base_history, state.chat_history, state.observations)
                 state.consecutive_errors = 0
                 current_step = None
             except AgentError as exc:
@@ -169,6 +233,7 @@ class AgentRuntime:
                         thought=current_step.thought if current_step else None,
                     )
                 )
+                self.memory_store.write_snapshot(base_history, state.chat_history, state.observations)
                 if state.consecutive_errors > self.max_consecutive_errors:
                     summary = f"Сессия остановлена после повторяющихся ошибок: {exc}"
                     state.add_chat_message(

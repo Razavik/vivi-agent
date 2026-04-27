@@ -18,6 +18,8 @@ class SSEStream:
     def __init__(self, ctx: ServerContext, confirmation: ConfirmationManager) -> None:
         self.ctx = ctx
         self.confirmation = confirmation
+        # Регистрируем себя как провайдер автономных запусков директора
+        ctx.set_autonomous_run_callback(self._run_autonomous)
 
     def run_and_stream(
         self,
@@ -26,10 +28,33 @@ class SSEStream:
         write_callback: Callable[[bytes], None],
         images: list[str] | None = None,
     ) -> dict[str, Any]:
-        """
-        Запускает агента в отдельном потоке и стримит SSE-события через write_callback.
-        Возвращает финальный результат.
-        """
+        """Запускает агента в отдельном потоке и стримит SSE-события через write_callback."""
+        return self._run_agent(task, chat_history, write_callback, images=images)
+
+    def _run_autonomous(self, message: str) -> None:
+        """Автономный запуск директора без подключённого клиента (triggered by supervisor)."""
+        def _noop(_data: bytes) -> None:
+            pass
+
+        threading.Thread(
+            target=self._run_agent,
+            args=(message, [], _noop),
+            kwargs={"autonomous": True},
+            daemon=True,
+            name="director-autonomous",
+        ).start()
+
+    def _run_agent(
+        self,
+        task: str,
+        chat_history: list[dict[str, str]],
+        write_callback: Callable[[bytes], None],
+        images: list[str] | None = None,
+        autonomous: bool = False,
+    ) -> dict[str, Any]:
+        """Общий метод запуска агента: обычный (с write_callback) или автономный."""
+        import time as _time
+
         logger = SessionLogger(self.ctx.settings.log_dir)
         event_queue: queue.Queue[dict[str, Any] | None] = queue.Queue()
         result_holder: dict[str, Any] = {}
@@ -42,6 +67,8 @@ class SSEStream:
             event_queue.put({"event": event, "payload": payload})
 
         def confirm_callback(message: str) -> bool:
+            if autonomous:
+                return False
             return self.confirmation.wait_confirmation()
 
         def run_agent() -> None:
@@ -59,6 +86,7 @@ class SSEStream:
                 result_holder["summary"] = summary
                 result_holder["tools"] = registry.describe_all()
                 result_holder["log_file"] = str(logger.log_file)
+                result_holder["autonomous"] = autonomous
             except Exception as e:
                 result_holder["error"] = str(e)
             finally:
@@ -69,8 +97,6 @@ class SSEStream:
         agent_thread = threading.Thread(target=run_agent)
         agent_thread.start()
 
-        # Стримим SSE-события
-        import time
         agent_finished = False
         while True:
             try:
@@ -81,8 +107,7 @@ class SSEStream:
                 data = json.dumps(event, ensure_ascii=False)
                 try:
                     write_callback(f"data: {data}\n\n".encode("utf-8"))
-                    # Небольшая пауза чтобы браузер успел получить и отрендерить событие
-                    time.sleep(0.01)
+                    _time.sleep(0.01)
                 except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
                     pass
             except queue.Empty:
@@ -95,12 +120,12 @@ class SSEStream:
         if agent_thread.is_alive():
             result_holder["error"] = "Агент не ответил в течение 180 секунд"
 
-        # Финальное событие
-        final_event = {"event": "__final__", "payload": result_holder}
-        data = json.dumps(final_event, ensure_ascii=False)
-        try:
-            write_callback(f"data: {data}\n\n".encode("utf-8"))
-        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
-            pass
+        if not autonomous:
+            final_event = {"event": "__final__", "payload": result_holder}
+            data = json.dumps(final_event, ensure_ascii=False)
+            try:
+                write_callback(f"data: {data}\n\n".encode("utf-8"))
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+                pass
 
         return result_holder

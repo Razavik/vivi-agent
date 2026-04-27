@@ -47,6 +47,8 @@ class ChatMemoryStore:
 
             session_actions = []
             for observation in session_observations:
+                if observation.action == "finish_task":
+                    continue
                 record = {
                     "step": observation.step,
                     "action": observation.action,
@@ -81,6 +83,53 @@ class ChatMemoryStore:
             data["updated_at"] = datetime.now(UTC).isoformat()
             self._write_unlocked(data)
             return data
+
+    def write_snapshot(
+        self,
+        base_history: list[dict[str, Any]],
+        session_chat_history: list[ChatMessage],
+        session_observations: list[Observation],
+        model: str | None = None,
+    ) -> None:
+        """Записывает текущее состояние сессии поверх файла (промежуточный снапшот).
+        base_history — история ДО начала текущей сессии, не накапливает дубли."""
+        with self._lock:
+            session_actions = []
+            for observation in session_observations:
+                if observation.action == "finish_task":
+                    continue
+                record: dict[str, Any] = {
+                    "step": observation.step,
+                    "action": observation.action,
+                    "success": observation.success,
+                    "result": self._normalize(observation.result),
+                }
+                if observation.thought:
+                    record["thought"] = observation.thought
+                session_actions.append(record)
+
+            chat_history = list(base_history)
+            for i, item in enumerate(session_chat_history):
+                record = {"role": item.role, "content": item.content}
+                if item.thought:
+                    record["thought"] = item.thought
+                if item.plan:
+                    record["plan"] = [
+                        {"id": p.id, "content": p.content, "status": p.status}
+                        for p in item.plan
+                    ]
+                if item.role == "assistant" and i == len(session_chat_history) - 1:
+                    if session_actions:
+                        record["actions"] = session_actions
+                    if model:
+                        record["model"] = model
+                chat_history.append(record)
+
+            data: dict[str, Any] = {
+                "chat_history": chat_history[-200:],
+                "updated_at": datetime.now(UTC).isoformat(),
+            }
+            self._write_unlocked(data)
 
     def clear(self) -> dict[str, Any]:
         with self._lock:

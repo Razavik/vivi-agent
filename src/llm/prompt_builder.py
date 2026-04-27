@@ -2,14 +2,20 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import tiktoken
 from src.agent.state import SessionState
 
 
-def load_system_prompt() -> str:
+def load_system_prompt(user_name: str = "Пользователь", user_role: str = "", user_preferences: str = "", user_context: str = "") -> str:
     prompt_path = Path(__file__).resolve().parents[2] / "prompts" / "system_prompt.txt"
-    return prompt_path.read_text(encoding="utf-8")
+    prompt = prompt_path.read_text(encoding="utf-8")
+    prompt = prompt.replace("{user_name}", user_name)
+    prompt = prompt.replace("{user_role}", user_role)
+    prompt = prompt.replace("{user_preferences}", user_preferences)
+    prompt = prompt.replace("{user_context}", user_context)
+    return prompt
 
 
 
@@ -29,8 +35,14 @@ def count_tokens(messages: list[dict[str, str]], model: str = "gemma4:31b-cloud"
         return total_chars // 4
 
 
-def build_messages(state: SessionState, tool_descriptions: list[dict[str, object]], workspace_root: str, user_name: str = "Пользователь", available_agents: list[dict[str, str]] | None = None, images: list[str] | None = None, active_runs: list[dict[str, Any]] | None = None) -> tuple[list[dict[str, object]], int]:
-    system_prompt = load_system_prompt()
+def build_messages(state: SessionState, tool_descriptions: list[dict[str, object]], workspace_root: str, user_name: str = "Пользователь", available_agents: list[dict[str, str]] | None = None, images: list[str] | None = None, active_runs: list[dict[str, Any]] | None = None, supervisor_observations: list[dict[str, Any]] | None = None, user_profile: dict[str, str] | None = None) -> tuple[list[dict[str, object]], int]:
+    profile = user_profile or {}
+    system_prompt = load_system_prompt(
+        user_name=profile.get("name", user_name),
+        user_role=profile.get("role", ""),
+        user_preferences=profile.get("preferences", ""),
+        user_context=profile.get("context", ""),
+    )
 
     # Добавляем критические инструкции в payload
     critical_instructions = """
@@ -38,7 +50,7 @@ def build_messages(state: SessionState, tool_descriptions: list[dict[str, object
 1. Если инструмент вернул ОШИБКУ, объясни пользователю причину простым языком и попробуй ДРУГОЙ подход. Измени аргументы (например, другое название приложения) или используй другой инструмент.
 2. Не повторяй тот же самый вызов после ошибки - сразу меняй тактику.
 3. Если данные успешно получены, в следующем шаге используй finish_task (или send_message, если работа продолжается).
-4. Параметр summary (или message) должен содержать ПОЛНЫЙ ответ с конкретными данными из observations.
+4. Параметр summary (или message) должен содержать ПОЛНЫЙ, РАЗВЁРНУТЫЙ ответ. ЗАПРЕЩЕНО писать короткий placeholder вместо реального ответа. Не сокращай, не пиши "Задача выполнена" вместо полного результата.
 5. Summary (и message в send_message) можно оформлять markdown-подобно для UI: использовать заголовки #, ##, списки -, 1., **жирный текст**, `inline code` и блоки кода ``` ```.
 6. Форматируй только текст для пользователя. Сам JSON-ответ модели должен оставаться строго валидным JSON.
 7. ЗАПРЕЩЕНО упоминать инструменты которых нет в списке "tools" - даже в summary или message. Используй только те инструменты, что реально доступны в списке tools.
@@ -65,6 +77,7 @@ def build_messages(state: SessionState, tool_descriptions: list[dict[str, object
         "user_name": user_name,
         "available_agents": available_agents or [],
         "active_runs": active_runs or [],
+        "supervisor_observations": supervisor_observations or [],
     }
     user_message: dict[str, object] = {
         "role": "user",

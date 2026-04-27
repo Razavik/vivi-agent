@@ -1,0 +1,145 @@
+.container {
+	position: fixed;
+	bottom: 20px;
+	right: 20px;
+	z-index: 999;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	max-width: 380px;
+	width: 100%;
+}
+
+.header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 4px 0;
+}
+
+.title {
+	font-size: 11px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	color: var(--text-muted);
+}
+
+.dismissAll {
+	font-size: 11px;
+	color: var(--text-muted);
+	background: none;
+	border: none;
+	cursor: pointer;
+	padding: 2px 6px;
+	border-radius: 4px;
+	transition: background 0.15s;
+}
+.dismissAll:hover {
+	background: rgba(255, 255, 255, 0.07);
+}
+
+.alert {
+	background: var(--bg-sidebar);
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	padding: 10px 12px;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+	animation: slideIn 0.2s ease-out;
+}
+
+@keyframes slideIn {
+	from {
+		opacity: 0;
+		transform: translateY(12px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+.alert.hang_detected {
+	border-color: rgba(255, 123, 114, 0.4);
+}
+.alert.stale_paused {
+	border-color: rgba(246, 211, 101, 0.4);
+}
+.alert.waiting_timeout {
+	border-color: rgba(130, 180, 255, 0.4);
+}
+.alert.deadlock_detected {
+	border-color: rgba(255, 123, 114, 0.6);
+}
+
+.alertTop {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.alertType {
+	font-size: 11px;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+.hang_detected .alertType {
+	color: var(--err);
+}
+.stale_paused .alertType {
+	color: var(--warn);
+}
+.waiting_timeout .alertType {
+	color: #82b4ff;
+}
+.deadlock_detected .alertType {
+	color: var(--err);
+}
+
+.alertAgent {
+	font-size: 11px;
+	color: var(--text-muted);
+	background: rgba(255, 255, 255, 0.06);
+	padding: 1px 6px;
+	border-radius: 8px;
+}
+
+.alertIdle {
+	font-size: 11px;
+	color: var(--text-muted);
+	margin-left: auto;
+}
+
+.close {
+	font-size: 11px;
+	color: var(--text-muted);
+	background: none;
+	border: none;
+	cursor: pointer;
+	padding: 2px 4px;
+	border-radius: 4px;
+	line-height: 1;
+	transition: background 0.15s;
+}
+.close:hover {
+	background: rgba(255, 255, 255, 0.07);
+}
+
+.alertMessage {
+	font-size: 12px;
+	color: var(--text-main);
+	line-height: 1.4;
+}
+
+.alertTask {
+	font-size: 11px;
+	color: var(--text-muted);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}

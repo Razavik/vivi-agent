@@ -1,14 +1,19 @@
 import { useState, useCallback } from "react";
 import { Routes, Route, useLocation, useNavigate } from "react-router-dom";
 import { useAgent } from "./hooks/useAgent";
+import { useSupervisorAlerts } from "./hooks/useSupervisorAlerts";
 import { NavBar, type NavPage } from "./components/NavBar/NavBar";
 import { ChatHeader } from "./components/ChatHeader/ChatHeader";
 import { ChatThread } from "./components/ChatThread/ChatThread";
 import { Composer } from "./components/Composer/Composer";
 import { ConfirmationPrompt } from "./components/ConfirmationPrompt/ConfirmationPrompt";
+import { SupervisorAlerts } from "./components/SupervisorAlerts/SupervisorAlerts";
 import { ToolsPage } from "./pages/ToolsPage/ToolsPage";
 import { AgentChatPage } from "./pages/AgentChatPage/AgentChatPage";
 import { SettingsPage } from "./pages/SettingsPage/SettingsPage";
+import { RunsDashboardPage } from "./pages/RunsDashboardPage/RunsDashboardPage";
+import { BusPage } from "./pages/BusPage/BusPage";
+import { CrashesPage } from "./pages/CrashesPage/CrashesPage";
 import "./index.css";
 
 function pathToPage(pathname: string): NavPage {
@@ -16,6 +21,9 @@ function pathToPage(pathname: string): NavPage {
 	if (pathname.startsWith("/agents")) return "agents";
 	if (pathname.startsWith("/tools")) return "tools";
 	if (pathname.startsWith("/settings")) return "settings";
+	if (pathname.startsWith("/runs")) return "runs";
+	if (pathname.startsWith("/bus")) return "bus";
+	if (pathname.startsWith("/crashes")) return "crashes";
 	return "chat";
 }
 
@@ -24,9 +32,13 @@ const PAGE_TO_PATH: Record<NavPage, string> = {
 	agents: "/agents",
 	tools: "/tools",
 	settings: "/settings",
+	runs: "/runs",
+	bus: "/bus",
+	crashes: "/crashes",
 };
 
 function App() {
+	const supervisorAlerts = useSupervisorAlerts();
 	const [task, setTask] = useState("");
 	const [images, setImages] = useState<string[]>([]);
 	const location = useLocation();
@@ -102,115 +114,155 @@ function App() {
 	const handleApprove = () => void respondToConfirmation(true).catch(console.error);
 	const handleReject = () => void respondToConfirmation(false).catch(console.error);
 
-	const hasActiveAgents = subAgentPanes.some((p) => p.status === "running");
+	const hasActiveAgents = subAgentPanes.some(
+		(p) => p.status === "running" || p.status === "paused" || p.status === "interrupted",
+	);
 
 	return (
-		<div className="wrap">
-			<div className="grid">
-				<NavBar
-					activePage={activePage}
-					onNavigate={handleNavigate}
-					hasActiveAgents={hasActiveAgents}
-				/>
+		<>
+			<div className="wrap">
+				<div className="grid">
+					<NavBar
+						activePage={activePage}
+						onNavigate={handleNavigate}
+						hasActiveAgents={hasActiveAgents}
+						alertCount={supervisorAlerts.alerts.length}
+					/>
 
-				<Routes>
-					<Route
-						path="/"
-						element={
-							<section
-								className="chat-shell"
-								onDragOver={handleDragOver}
-								onDragLeave={handleDragLeave}
-								onDrop={handleDrop}
-							>
-								{isDragging && (
-									<div className="drag-overlay">
-										<div className="drag-overlay-box">
-											<svg
-												width="40"
-												height="40"
-												viewBox="0 0 24 24"
-												fill="none"
-												stroke="currentColor"
-												strokeWidth="1.5"
-												strokeLinecap="round"
-												strokeLinejoin="round"
-											>
-												<rect x="3" y="3" width="18" height="18" rx="2" />
-												<circle cx="8.5" cy="8.5" r="1.5" />
-												<polyline points="21 15 16 10 5 21" />
-											</svg>
-											<span>Отпустите для загрузки</span>
+					<Routes>
+						<Route
+							path="/"
+							element={
+								<section
+									className="chat-shell"
+									onDragOver={handleDragOver}
+									onDragLeave={handleDragLeave}
+									onDrop={handleDrop}
+								>
+									{isDragging && (
+										<div className="drag-overlay">
+											<div className="drag-overlay-box">
+												<svg
+													width="40"
+													height="40"
+													viewBox="0 0 24 24"
+													fill="none"
+													stroke="currentColor"
+													strokeWidth="1.5"
+													strokeLinecap="round"
+													strokeLinejoin="round"
+												>
+													<rect
+														x="3"
+														y="3"
+														width="18"
+														height="18"
+														rx="2"
+													/>
+													<circle cx="8.5" cy="8.5" r="1.5" />
+													<polyline points="21 15 16 10 5 21" />
+												</svg>
+												<span>Отпустите для загрузки</span>
+											</div>
 										</div>
-									</div>
-								)}
-								<ChatHeader
-									onClearHistory={handleClearHistory}
-									onClearLogs={handleClearLogs}
-									isBusy={isRunning}
-									contextTokens={contextTokens}
-								/>
-								<ChatThread
-									events={events}
-									currentAnswer={currentAnswer}
-									liveThought={liveThought}
-								/>
-								{confirmationRequest && (
-									<ConfirmationPrompt
-										request={confirmationRequest}
-										onApprove={handleApprove}
-										onReject={handleReject}
+									)}
+									<ChatHeader
+										onClearHistory={handleClearHistory}
+										onClearLogs={handleClearLogs}
+										isBusy={isRunning}
+										contextTokens={contextTokens}
 									/>
-								)}
-								<Composer
-									task={task}
-									images={images}
-									onTaskChange={setTask}
-									onImagesChange={setImages}
-									onRun={handleRun}
-									onStop={cancelTask}
-									isRunning={isRunning}
-									liveStatus={liveStatus}
-								/>
-							</section>
-						}
-					/>
-					<Route
-						path="/agents"
-						element={
-							<section className="page-shell">
-								<AgentChatPage panes={subAgentPanes} />
-							</section>
-						}
-					/>
-					<Route
-						path="/agents/:paneId"
-						element={
-							<section className="page-shell">
-								<AgentChatPage panes={subAgentPanes} />
-							</section>
-						}
-					/>
-					<Route
-						path="/tools"
-						element={
-							<section className="page-shell">
-								<ToolsPage tools={tools} />
-							</section>
-						}
-					/>
-					<Route
-						path="/settings"
-						element={
-							<section className="page-shell">
-								<SettingsPage />
-							</section>
-						}
-					/>
-					<Route path="*" element={<></>} />
-				</Routes>
+									<ChatThread
+										events={events}
+										currentAnswer={currentAnswer}
+										liveThought={liveThought}
+									/>
+									{confirmationRequest && (
+										<ConfirmationPrompt
+											request={confirmationRequest}
+											onApprove={handleApprove}
+											onReject={handleReject}
+										/>
+									)}
+									<Composer
+										task={task}
+										images={images}
+										onTaskChange={setTask}
+										onImagesChange={setImages}
+										onRun={handleRun}
+										onStop={cancelTask}
+										isRunning={isRunning}
+										liveStatus={liveStatus}
+									/>
+								</section>
+							}
+						/>
+						<Route
+							path="/agents"
+							element={
+								<section className="page-shell">
+									<AgentChatPage panes={subAgentPanes} />
+								</section>
+							}
+						/>
+						<Route
+							path="/agents/:paneId"
+							element={
+								<section className="page-shell">
+									<AgentChatPage panes={subAgentPanes} />
+								</section>
+							}
+						/>
+						<Route
+							path="/tools"
+							element={
+								<section className="page-shell">
+									<ToolsPage tools={tools} />
+								</section>
+							}
+						/>
+						<Route
+							path="/settings"
+							element={
+								<section className="page-shell">
+									<SettingsPage />
+								</section>
+							}
+						/>
+						<Route
+							path="/runs"
+							element={
+								<section className="page-shell">
+									<RunsDashboardPage />
+								</section>
+							}
+						/>
+						<Route
+							path="/bus"
+							element={
+								<section className="page-shell">
+									<BusPage />
+								</section>
+							}
+						/>
+						<Route
+							path="/crashes"
+							element={
+								<section className="page-shell">
+									<CrashesPage />
+								</section>
+							}
+						/>
+						<Route path="*" element={<></>} />
+					</Routes>
+				</div>
 			</div>
-		</div>
+			<SupervisorAlerts
+				alerts={supervisorAlerts.alerts}
+				onDismiss={supervisorAlerts.dismiss}
+				onDismissAll={supervisorAlerts.dismissAll}
+			/>
+		</>
 	);
 }
 
