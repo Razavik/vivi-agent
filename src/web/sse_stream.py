@@ -7,6 +7,8 @@ from http import HTTPStatus
 from typing import Any, Callable
 
 from src.app_factory import build_runtime
+from src.agent.events import normalize_event
+from src.infra.agent_ops import AgentOpsService
 from src.infra.logging import SessionLogger
 from src.web.confirmation import ConfirmationManager
 from src.web.context import ServerContext
@@ -56,15 +58,41 @@ class SSEStream:
         import time as _time
 
         logger = SessionLogger(self.ctx.settings.log_dir)
+        ops = AgentOpsService(self.ctx.settings, self.ctx)
+        preflight = ops.preflight(task)
         event_queue: queue.Queue[dict[str, Any] | None] = queue.Queue()
         result_holder: dict[str, Any] = {}
 
+        if not preflight.get("allowed", False):
+            result_holder["error"] = preflight.get("summary", "Preflight blocked run")
+            result_holder["preflight"] = preflight
+            if not autonomous:
+                event = {
+                    "event": "agent_error",
+                    "payload": {"message": result_holder["error"], "preflight": preflight},
+                }
+                write_callback(f"data: {json.dumps(event, ensure_ascii=False)}\n\n".encode("utf-8"))
+                final_event = {"event": "__final__", "payload": result_holder}
+                write_callback(f"data: {json.dumps(final_event, ensure_ascii=False)}\n\n".encode("utf-8"))
+            return result_holder
+
+        if preflight.get("warnings") and not autonomous:
+            event = {
+                "event": "agent_warning",
+                "payload": {
+                    "message": f"Preflight: предупреждений {len(preflight.get('warnings', []))}. Запуск продолжается.",
+                    "preflight": preflight,
+                },
+            }
+            write_callback(f"data: {json.dumps(event, ensure_ascii=False)}\n\n".encode("utf-8"))
+
         def event_sink(event: str, data: object) -> None:
-            payload = data if isinstance(data, dict) else {"value": data}
+            normalized = normalize_event(event, data)
+            payload = normalized.payload
             self.ctx.handle_run_event(event, payload)
             if event == "confirmation_requested":
                 payload = self.confirmation.create_request(payload)
-            event_queue.put({"event": event, "payload": payload})
+            event_queue.put({"event": normalized.event, "payload": payload, "timestamp": normalized.timestamp})
 
         def confirm_callback(message: str) -> bool:
             if autonomous:
@@ -119,6 +147,11 @@ class SSEStream:
         agent_thread.join(timeout=180)
         if agent_thread.is_alive():
             result_holder["error"] = "Агент не ответил в течение 180 секунд"
+
+        try:
+            result_holder["post_run_review"] = ops.create_post_run_review(task, result_holder, preflight)
+        except Exception as exc:
+            result_holder["post_run_review_error"] = str(exc)
 
         if not autonomous:
             final_event = {"event": "__final__", "payload": result_holder}

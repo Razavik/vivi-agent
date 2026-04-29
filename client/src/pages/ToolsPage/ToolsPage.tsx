@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+﻿import { useState, useMemo, useEffect } from "react";
 import styles from "./ToolsPage.module.css";
 import type { Tool } from "../../types";
 import { Select } from "../../components/Select/Select";
@@ -57,7 +57,8 @@ export function ToolsPage({ tools }: ToolsPageProps) {
 	const [loaded, setLoaded] = useState(false);
 	const [models, setModels] = useState<Record<string, string>>({});
 	const [defaultModel, setDefaultModel] = useState("");
-	const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+	const [availableModels, setAvailableModels] = useState<string[]>([]);
+	const [downloadedModels, setDownloadedModels] = useState<string[]>([]);
 	const [showAddAgent, setShowAddAgent] = useState(false);
 	const [newAgentName, setNewAgentName] = useState("");
 	const [newAgentDisplay, setNewAgentDisplay] = useState("");
@@ -67,13 +68,15 @@ export function ToolsPage({ tools }: ToolsPageProps) {
 	useEffect(() => {
 		const load = async () => {
 			try {
-				const [agentsRes, modelsRes, ollamaRes] = await Promise.all([
+				const [agentsRes, modelsRes, availRes, ollamaRes] = await Promise.all([
 					fetch("/api/agents-config"),
 					fetch("/api/models"),
 					fetch("/api/available-models"),
+					fetch("/api/ollama-models"),
 				]);
 				const agentsData = await agentsRes.json();
 				const modelsData = await modelsRes.json();
+				const availData = await availRes.json();
 				const ollamaData = await ollamaRes.json();
 				if (agentsData.config) {
 					setAgentsConfig(agentsData.config);
@@ -82,7 +85,8 @@ export function ToolsPage({ tools }: ToolsPageProps) {
 				}
 				if (modelsData.models) setModels(modelsData.models);
 				if (modelsData.default) setDefaultModel(modelsData.default);
-				if (ollamaData.models) setOllamaModels(ollamaData.models);
+				if (availData.models) setAvailableModels(availData.models);
+				if (ollamaData.models) setDownloadedModels(ollamaData.models);
 			} catch (e) {
 				console.error("Ошибка загрузки:", e);
 			} finally {
@@ -168,6 +172,27 @@ export function ToolsPage({ tools }: ToolsPageProps) {
 	// Отображаемое имя агента
 	const getLabel = (key: string) => agentsConfig[key]?.display_name || key;
 	const getColor = (key: string) => getAgentColor(key, availableAgents.indexOf(key));
+	const downloadedSet = useMemo(() => new Set(downloadedModels), [downloadedModels]);
+	const modelOptions = useMemo(
+		() => [
+			{ value: "", label: `по умолчанию (${defaultModel})` },
+			...Array.from(
+				new Set(
+					[
+						...downloadedModels,
+						...availableModels,
+						...Object.values(models).filter(Boolean),
+						defaultModel,
+					].filter(Boolean),
+				),
+			).map((m) => ({
+				value: m,
+				label: downloadedSet.has(m) ? `${m} · скачана` : m,
+				dot: downloadedSet.has(m) ? "#22c55e" : undefined,
+			})),
+		],
+		[availableModels, defaultModel, downloadedModels, downloadedSet, models],
+	);
 
 	// Фильтрация инструментов для выбранного агента
 	const agentTools = useMemo(() => {
@@ -265,11 +290,8 @@ export function ToolsPage({ tools }: ToolsPageProps) {
 						value={models[selectedAgent] || ""}
 						onChange={(v) => setAgentModel(selectedAgent, v)}
 						placeholder={defaultModel || "по умолчанию"}
-						options={[
-							{ value: "", label: `по умолчанию (${defaultModel})` },
-							...ollamaModels.map((m) => ({ value: m, label: m })),
-						]}
-					/>
+							options={modelOptions}
+						/>
 				</div>
 			</div>
 
@@ -444,3 +466,4 @@ export function ToolsPage({ tools }: ToolsPageProps) {
 		</div>
 	);
 }
+

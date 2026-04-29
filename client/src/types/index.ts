@@ -117,3 +117,86 @@ export interface SupervisorAlert {
 	payload: SupervisorAlertPayload;
 	timestamp: number;
 }
+
+export type DiagnosticStatus = "pass" | "warn" | "fail" | "skip";
+export type DiagnosticSeverity = "info" | "medium" | "high" | "critical";
+
+export interface DiagnosticCheck {
+	id: string;
+	title: string;
+	status: DiagnosticStatus;
+	severity: DiagnosticSeverity;
+	summary: string;
+	action?: string;
+	details?: Record<string, unknown>;
+}
+
+export interface DiagnosticsReport {
+	generated_at: number;
+	score: number;
+	status: "healthy" | "attention" | "critical";
+	counts: Record<DiagnosticStatus, number>;
+	summary: string;
+	checks: DiagnosticCheck[];
+	facts: Record<string, unknown>;
+}
+
+export interface PreflightReport {
+	allowed: boolean;
+	status: "passed" | "blocked";
+	summary: string;
+	blocking: DiagnosticCheck[];
+	warnings: DiagnosticCheck[];
+	report: DiagnosticsReport;
+	task?: string;
+}
+
+export interface PostRunReview {
+	id: string;
+	created_at: number;
+	task: string;
+	status: "clean" | "needs_attention";
+	summary: string;
+	result_error?: string;
+	result_summary?: string;
+	log_file?: string;
+	diagnostics_score?: number;
+	diagnostics_status?: string;
+	preflight_status?: string;
+	failed_checks: DiagnosticCheck[];
+	warning_checks: DiagnosticCheck[];
+}
+
+export interface AgentScorecardItem {
+	agent: string;
+	total: number;
+	finished: number;
+	failed: number;
+	cancelled: number;
+	blocked: number;
+	retries: number;
+	interrupts: number;
+	avg_steps: number;
+	success_rate: number;
+}
+
+export interface MemoryInspectionItem {
+	agent: string;
+	display_name: string;
+	file: string;
+	exists: boolean;
+	updated_at?: string;
+	messages: number;
+	assistant_messages: number;
+	user_messages: number;
+	actions: number;
+	facts: string[];
+	stale: boolean;
+}
+
+export interface TaskTemplate {
+	id: string;
+	title: string;
+	prompt: string;
+	quality_gates: string[];
+}

@@ -1,2 +1,6 @@
-pygame
-ursina
+requests
+websockets
+telethon
+tiktoken
+python-dotenv
+pytest

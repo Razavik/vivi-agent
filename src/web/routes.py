@@ -5,9 +5,11 @@ from http import HTTPStatus
 from typing import Any
 
 from src.app_factory import describe_all_tools
-from src.infra.config import DIRECTOR_REQUIRED_TOOLS, MODELS_FILE, _load_tools_config, _save_tools_config, get_agent_tools_config, _load_agents_config, _save_agents_config, load_available_models, _load_user_profile, _save_user_profile
+from src.infra.settings_service import SettingsService
+from src.infra.config import MODELS_FILE, _load_tools_config, _save_tools_config, get_agent_tools_config, _load_agents_config, _save_agents_config, load_available_models, _load_user_profile, _save_user_profile
 from src.web.confirmation import ConfirmationManager
 from src.web.context import ServerContext
+from src.web.route_modules.ops_routes import OpsRoutes
 from src.web.sse_stream import SSEStream
 
 
@@ -18,6 +20,7 @@ class Routes:
         self.ctx = ctx
         self.confirmation = ConfirmationManager(ctx)
         self.sse = SSEStream(ctx, self.confirmation)
+        self.ops = OpsRoutes(ctx)
 
     def get_tools(self) -> dict[str, Any]:
         return {"tools": describe_all_tools(self.ctx.settings)}
@@ -85,25 +88,7 @@ class Routes:
         config = body.get("config", {})
         if not isinstance(config, dict):
             return {"error": "config must be an object"}, HTTPStatus.BAD_REQUEST
-        cleaned = {k: v for k, v in config.items() if isinstance(v, (str, dict, list, bool, int, float))}
-        director_cfg = cleaned.get("director")
-        if isinstance(director_cfg, dict):
-            raw_tools = director_cfg.get("tools")
-            tools_by_name: dict[str, dict[str, Any]] = {}
-            if isinstance(raw_tools, list):
-                for entry in raw_tools:
-                    if isinstance(entry, dict):
-                        name = str(entry.get("name", ""))
-                        if name:
-                            tools_by_name[name] = dict(entry)
-                    elif isinstance(entry, str):
-                        tools_by_name[entry] = {"name": entry, "enabled": True}
-            for tool_name in DIRECTOR_REQUIRED_TOOLS:
-                current = tools_by_name.get(tool_name, {"name": tool_name})
-                current["enabled"] = True
-                current["required"] = True
-                tools_by_name[tool_name] = current
-            director_cfg["tools"] = list(tools_by_name.values())
+        cleaned = SettingsService().sanitize_agents_config(config)
         _save_agents_config(cleaned)
         return {"saved": True, "config": cleaned}
 
@@ -200,6 +185,36 @@ class Routes:
 
     def get_supervisor_alerts(self, limit: int = 10) -> dict[str, Any]:
         return {"alerts": self.ctx.get_supervisor_alerts(limit)}
+
+    def get_diagnostics(self) -> dict[str, Any]:
+        return self.ops.diagnostics()
+
+    def get_preflight(self) -> dict[str, Any]:
+        return self.ops.preflight()
+
+    def get_post_run_reviews(self) -> dict[str, Any]:
+        return self.ops.post_run_reviews()
+
+    def get_agent_scorecard(self) -> dict[str, Any]:
+        return self.ops.scorecard()
+
+    def get_memory_inspector(self) -> dict[str, Any]:
+        return self.ops.memory_inspector()
+
+    def get_task_templates(self) -> dict[str, Any]:
+        return self.ops.task_templates()
+
+    def get_run_replays(self) -> dict[str, Any]:
+        return self.ops.run_replays()
+
+    def get_tool_contract_tests(self) -> dict[str, Any]:
+        return self.ops.tool_contract_tests()
+
+    def run_maintenance(self) -> dict[str, Any]:
+        return self.ops.maintenance()
+
+    def preview_command(self, body: dict[str, Any]) -> dict[str, Any]:
+        return self.ops.command_preview(body)
 
     def get_run_artifacts(self, run_id: str) -> dict[str, Any]:
         return {"run_id": run_id, "artifacts": self.ctx.list_artifacts(run_id)}

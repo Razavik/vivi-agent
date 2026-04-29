@@ -44,6 +44,9 @@ def describe_all_tools(settings: Settings | None = None) -> list[dict[str, objec
         ToolSpec("resume_run", "Возобновить приостановленный запуск саб-агента по run_id", 0, lambda a: None, {"run_id": "str"}),
         ToolSpec("message_run", "Отправить сообщение в inbox активного запуска саб-агента по run_id", 0, lambda a: None, {"run_id": "str", "message": "str"}),
         ToolSpec("replace_task_run", "Заменить задачу у активного запуска саб-агента по run_id", 0, lambda a: None, {"run_id": "str", "task": "str"}),
+        ToolSpec("reprioritize_run", "Изменить приоритет активного run", 0, lambda a: None, {"run_id": "str", "priority": "int"}),
+        ToolSpec("get_world_state", "Получить снимок состояния активных run, ожиданий и зависимостей", 0, lambda a: None, {}),
+        ToolSpec("wait_for_event", "Дождаться завершения или блокировки конкретного run", 0, lambda a: None, {"run_id": "str", "timeout_seconds": "float?"}),
     ]
     director_tools: list[dict[str, object]] = []
     for spec in _director_specs:
@@ -366,6 +369,32 @@ def build_director_registry(
     run_tools: RunTools | None = None,
 ) -> ToolRegistry:
     """Создаёт реестр инструментов директора."""
+    def unavailable_run_tool(name: str):
+        def _handler(*_args: object, **_kwargs: object) -> dict[str, object]:
+            return {
+                "ok": False,
+                "error": f"Инструмент {name} недоступен: отсутствует server context",
+                "available": False,
+            }
+
+        return _handler
+
+    run_tool_impl = run_tools or type(
+        "_UnavailableRunTools",
+        (),
+        {
+            "view_runs": unavailable_run_tool("view_runs"),
+            "cancel_run": unavailable_run_tool("cancel_run"),
+            "pause_run": unavailable_run_tool("pause_run"),
+            "resume_run": unavailable_run_tool("resume_run"),
+            "message_run": unavailable_run_tool("message_run"),
+            "replace_task_run": unavailable_run_tool("replace_task_run"),
+            "reprioritize_run": unavailable_run_tool("reprioritize_run"),
+            "get_world_state": unavailable_run_tool("get_world_state"),
+            "wait_for_event": unavailable_run_tool("wait_for_event"),
+        },
+    )()
+
     registry = ToolRegistry()
     specs: list[ToolSpec] = [
         ToolSpec(
@@ -391,73 +420,70 @@ def build_director_registry(
             MemoryTools().get_agent_memory,
             {"agent": "str?", "limit": "int?"},
         ),
+        ToolSpec(
+            "view_runs",
+            "Показать активные запуски саб-агентов. limit — максимальное количество записей.",
+            0,
+            run_tool_impl.view_runs,
+            {"limit": "int?"},
+        ),
+        ToolSpec(
+            "cancel_run",
+            "Отменить активный запуск саб-агента по run_id.",
+            0,
+            run_tool_impl.cancel_run,
+            {"run_id": "str"},
+        ),
+        ToolSpec(
+            "pause_run",
+            "Приостановить активный запуск саб-агента по run_id.",
+            0,
+            run_tool_impl.pause_run,
+            {"run_id": "str"},
+        ),
+        ToolSpec(
+            "resume_run",
+            "Возобновить приостановленный запуск саб-агента по run_id.",
+            0,
+            run_tool_impl.resume_run,
+            {"run_id": "str"},
+        ),
+        ToolSpec(
+            "message_run",
+            "Отправить сообщение в inbox активного запуска саб-агента по run_id.",
+            0,
+            run_tool_impl.message_run,
+            {"run_id": "str", "message": "str"},
+        ),
+        ToolSpec(
+            "replace_task_run",
+            "Заменить задачу (user_goal) у активного запуска саб-агента по run_id.",
+            0,
+            run_tool_impl.replace_task_run,
+            {"run_id": "str", "task": "str"},
+        ),
+        ToolSpec(
+            "reprioritize_run",
+            "Изменить приоритет активного run (priority: 1=высший, 10=низший).",
+            0,
+            run_tool_impl.reprioritize_run,
+            {"run_id": "str", "priority": "int"},
+        ),
+        ToolSpec(
+            "get_world_state",
+            "Получить структурированный снимок состояния всей системы: активные run, вопросы, блокировки.",
+            0,
+            run_tool_impl.get_world_state,
+            {},
+        ),
+        ToolSpec(
+            "wait_for_event",
+            "Ждать завершения конкретного run. run_id — идентификатор, timeout_seconds — максимальное ожидание.",
+            0,
+            run_tool_impl.wait_for_event,
+            {"run_id": "str", "timeout_seconds": "float?"},
+        ),
     ]
-    if run_tools is not None:
-        specs.extend([
-            ToolSpec(
-                "view_runs",
-                "Показать активные запуски саб-агентов. limit — максимальное количество записей.",
-                0,
-                run_tools.view_runs,
-                {"limit": "int?"},
-            ),
-            ToolSpec(
-                "cancel_run",
-                "Отменить активный запуск саб-агента по run_id.",
-                0,
-                run_tools.cancel_run,
-                {"run_id": "str"},
-            ),
-            ToolSpec(
-                "pause_run",
-                "Приостановить активный запуск саб-агента по run_id.",
-                0,
-                run_tools.pause_run,
-                {"run_id": "str"},
-            ),
-            ToolSpec(
-                "resume_run",
-                "Возобновить приостановленный запуск саб-агента по run_id.",
-                0,
-                run_tools.resume_run,
-                {"run_id": "str"},
-            ),
-            ToolSpec(
-                "message_run",
-                "Отправить сообщение в inbox активного запуска саб-агента по run_id.",
-                0,
-                run_tools.message_run,
-                {"run_id": "str", "message": "str"},
-            ),
-            ToolSpec(
-                "replace_task_run",
-                "Заменить задачу (user_goal) у активного запуска саб-агента по run_id.",
-                0,
-                run_tools.replace_task_run,
-                {"run_id": "str", "task": "str"},
-            ),
-            ToolSpec(
-                "reprioritize_run",
-                "Изменить приоритет активного run (priority: 1=высший, 10=низший).",
-                0,
-                run_tools.reprioritize_run,
-                {"run_id": "str", "priority": "int"},
-            ),
-            ToolSpec(
-                "get_world_state",
-                "Получить структурированный снимок состояния всей системы: активные run, вопросы, блокировки.",
-                0,
-                run_tools.get_world_state,
-                {},
-            ),
-            ToolSpec(
-                "wait_for_event",
-                "Ждать завершения конкретного run. run_id — идентификатор, timeout_seconds — максимальное ожидание.",
-                0,
-                run_tools.wait_for_event,
-                {"run_id": "str", "timeout_seconds": "float?"},
-            ),
-        ])
     # Фильтруем по полю enabled из agents.json
     agents_config = _load_agents_config()
     director_cfg = agents_config.get("director")

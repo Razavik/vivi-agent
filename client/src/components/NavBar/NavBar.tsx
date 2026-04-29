@@ -1,6 +1,6 @@
 import styles from "./NavBar.module.css";
 
-export type NavPage = "chat" | "agents" | "tools" | "settings" | "runs" | "bus" | "crashes";
+export type NavPage = "chat" | "agents" | "tools" | "settings" | "runs" | "bus" | "crashes" | "diagnostics" | "ops";
 
 interface NavBarProps {
 	activePage: NavPage;
@@ -135,6 +135,51 @@ export function NavBar({ activePage, onNavigate, hasActiveAgents, alertCount = 0
 					<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
 					<line x1="12" y1="9" x2="12" y2="13" />
 					<line x1="12" y1="17" x2="12.01" y2="17" />
+				</svg>
+			</button>
+
+			<button
+				className={`${styles.navBtn} ${activePage === "diagnostics" ? styles.active : ""}`}
+				onClick={() => onNavigate("diagnostics")}
+				title="Diagnostics"
+			>
+				<svg
+					width="20"
+					height="20"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="2"
+					strokeLinecap="round"
+					strokeLinejoin="round"
+				>
+					<path d="M22 12h-4l-3 8L9 4l-3 8H2" />
+					<circle cx="12" cy="12" r="10" opacity="0.25" />
+				</svg>
+			</button>
+
+			<button
+				className={`${styles.navBtn} ${activePage === "ops" ? styles.active : ""}`}
+				onClick={() => onNavigate("ops")}
+				title="Agent Ops"
+			>
+				<svg
+					width="20"
+					height="20"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="2"
+					strokeLinecap="round"
+					strokeLinejoin="round"
+				>
+					<path d="M12 2v4" />
+					<path d="M12 18v4" />
+					<path d="m4.93 4.93 2.83 2.83" />
+					<path d="m16.24 16.24 2.83 2.83" />
+					<path d="M2 12h4" />
+					<path d="M18 12h4" />
+					<circle cx="12" cy="12" r="4" />
 				</svg>
 			</button>
 

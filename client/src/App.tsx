@@ -14,6 +14,8 @@ import { SettingsPage } from "./pages/SettingsPage/SettingsPage";
 import { RunsDashboardPage } from "./pages/RunsDashboardPage/RunsDashboardPage";
 import { BusPage } from "./pages/BusPage/BusPage";
 import { CrashesPage } from "./pages/CrashesPage/CrashesPage";
+import { DiagnosticsPage } from "./pages/DiagnosticsPage/DiagnosticsPage";
+import { AgentOpsPage } from "./pages/AgentOpsPage/AgentOpsPage";
 import "./index.css";
 
 function pathToPage(pathname: string): NavPage {
@@ -24,6 +26,8 @@ function pathToPage(pathname: string): NavPage {
 	if (pathname.startsWith("/runs")) return "runs";
 	if (pathname.startsWith("/bus")) return "bus";
 	if (pathname.startsWith("/crashes")) return "crashes";
+	if (pathname.startsWith("/diagnostics")) return "diagnostics";
+	if (pathname.startsWith("/ops")) return "ops";
 	return "chat";
 }
 
@@ -35,6 +39,8 @@ const PAGE_TO_PATH: Record<NavPage, string> = {
 	runs: "/runs",
 	bus: "/bus",
 	crashes: "/crashes",
+	diagnostics: "/diagnostics",
+	ops: "/ops",
 };
 
 function App() {
@@ -250,6 +256,22 @@ function App() {
 							element={
 								<section className="page-shell">
 									<CrashesPage />
+								</section>
+							}
+						/>
+						<Route
+							path="/diagnostics"
+							element={
+								<section className="page-shell">
+									<DiagnosticsPage />
+								</section>
+							}
+						/>
+						<Route
+							path="/ops"
+							element={
+								<section className="page-shell">
+									<AgentOpsPage />
 								</section>
 							}
 						/>

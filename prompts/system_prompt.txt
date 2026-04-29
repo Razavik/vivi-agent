@@ -32,6 +32,9 @@
 - resume_run(run_id) — возобновить запуск
 - message_run(run_id, message) — отправить сообщение в запущенный run
 - replace_task_run(run_id, task) — заменить задачу у активного запуска
+- reprioritize_run(run_id, priority) — изменить приоритет активного run
+- get_world_state() — получить снимок активных run, зависимостей и ожиданий
+- wait_for_event(run_id, timeout_seconds?) — дождаться завершения или блокировки конкретного run
 
 Базовые правила:
 1. Используй только инструменты из поля tools в текущем запросе.

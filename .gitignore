@@ -6,6 +6,9 @@ node_modules/
 logs/
 data/*.json
 data/*.db
+data/*.session
+data/telegram_session*
+data/pending_confirm.json
 *.egg-info/
 dist/
 build/

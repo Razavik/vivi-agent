@@ -13,7 +13,7 @@ class FileTools:
         self.path_guard = path_guard
 
     def create_file(self, args: dict[str, object]) -> dict[str, object]:
-        path = Path(str(args["path"])).expanduser().resolve()
+        path = self.path_guard.normalize(str(args["path"]))
         content_value = args.get("content", "")
         content = "" if content_value is None else str(content_value)
         overwrite_value = args.get("overwrite", False)
@@ -27,6 +27,7 @@ class FileTools:
         if path.exists() and not overwrite:
             raise ToolExecutionError(f"Файл уже существует: {path}")
 
+        self.path_guard.ensure_allowed(path.parent)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
         return {
@@ -49,7 +50,9 @@ class FileTools:
         path = self.path_guard.normalize(str(args["path"]))
         if not path.exists() or not path.is_file():
             raise ToolExecutionError(f"Файл не найден: {path}")
-        return {"path": str(path), "content": path.read_text(encoding="utf-8", errors="ignore")[:12000]}
+        content = path.read_text(encoding="utf-8", errors="ignore")
+        truncated = len(content) > 12000
+        return {"path": str(path), "content": content[:12000], "truncated": truncated, "size": len(content.encode("utf-8"))}
 
     def file_exists(self, args: dict[str, object]) -> dict[str, object]:
         path = self.path_guard.normalize(str(args["path"]))
@@ -144,9 +147,11 @@ class FileTools:
         count = content.count(old_str)
 
         if count == 0:
+            hint = self._patch_hint(content, old_str)
             raise ToolExecutionError(
                 f"Строка old_str не найдена в файле {path.name}. "
                 "Сначала прочитай файл через read_text_file и используй точный текст."
+                + (f" Возможный похожий фрагмент: {hint}" if hint else "")
             )
         if count > 1:
             raise ToolExecutionError(
@@ -365,3 +370,15 @@ class FileTools:
             "destination": str(destination),
             "renamed": True,
         }
+
+    def _patch_hint(self, content: str, old_str: str) -> str:
+        needle = old_str.strip().splitlines()
+        if not needle:
+            return ""
+        first = needle[0].strip()
+        if not first:
+            return ""
+        for line in content.splitlines():
+            if first[:40] and first[:40] in line:
+                return line.strip()[:180]
+        return ""

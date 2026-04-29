@@ -41,6 +41,22 @@ class AgentWebHandler(BaseHTTPRequestHandler):
             self._send_json(routes.get_active_runs())
         elif self.path == "/api/supervisor/alerts":
             self._send_json(routes.get_supervisor_alerts())
+        elif self.path == "/api/diagnostics":
+            self._send_json(routes.get_diagnostics())
+        elif self.path == "/api/preflight":
+            self._send_json(routes.get_preflight())
+        elif self.path == "/api/post-run-reviews":
+            self._send_json(routes.get_post_run_reviews())
+        elif self.path == "/api/agent-scorecard":
+            self._send_json(routes.get_agent_scorecard())
+        elif self.path == "/api/memory-inspector":
+            self._send_json(routes.get_memory_inspector())
+        elif self.path == "/api/task-templates":
+            self._send_json(routes.get_task_templates())
+        elif self.path == "/api/run-replays":
+            self._send_json(routes.get_run_replays())
+        elif self.path == "/api/tool-contract-tests":
+            self._send_json(routes.get_tool_contract_tests())
         elif self.path.startswith("/api/bus"):
             self._send_json(routes.get_bus_history())
         elif self.path == "/api/crashes":
@@ -142,6 +158,12 @@ class AgentWebHandler(BaseHTTPRequestHandler):
                     self._send_json(result[0], status=result[1])
                 else:
                     self._send_json(result)
+        elif self.path == "/api/maintenance/run":
+            self._send_json(routes.run_maintenance())
+        elif self.path == "/api/command-preview":
+            payload = self._read_json_body()
+            if payload is not None:
+                self._send_json(routes.preview_command(payload))
         elif self.path == "/api/open-path":
             payload = self._read_json_body()
             if payload is not None:

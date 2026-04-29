@@ -6,6 +6,7 @@ from dataclasses import asdict
 from typing import Any, Callable
 
 from src.agent.schemas import ActionStep
+from src.agent.events import normalize_event
 from src.agent.state import ChatMessage, Observation, PlanItem, SessionState
 from src.infra.chat_memory import ChatMemoryStore
 from src.infra.errors import AgentError, ToolExecutionError
@@ -295,7 +296,8 @@ class AgentRuntime:
 
     def _emit(self, event: str, payload: dict[str, Any]) -> None:
         if self.event_sink is not None:
-            self.event_sink(event, payload)
+            normalized = normalize_event(event, payload)
+            self.event_sink(normalized.event, normalized.payload)
 
     def _extract_complete_json_string_field(self, raw_content: str, field_name: str) -> str | None:
         match = re.search(

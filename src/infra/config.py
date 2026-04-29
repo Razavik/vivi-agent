@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -32,6 +33,10 @@ AgentConfig = dict[str, object]  # конфигурация одного аге�
 AgentsConfig = dict[str, AgentConfig]  # все агенты
 
 
+def _warn_config_error(operation: str, error: Exception) -> None:
+    print(f"[config] {operation}: {error}", file=sys.stderr)
+
+
 def _load_agents_config() -> AgentsConfig:
     """Загружает data/agents.json."""
     if AGENTS_FILE.exists():
@@ -41,8 +46,8 @@ def _load_agents_config() -> AgentsConfig:
             data = json.loads(AGENTS_FILE.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 return data
-        except Exception:
-            pass
+        except Exception as exc:
+            _warn_config_error(f"failed to load {AGENTS_FILE}", exc)
     return {}
 
 
@@ -56,8 +61,8 @@ def _save_agents_config(config: AgentsConfig) -> None:
             json.dumps(config, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        _warn_config_error(f"failed to save {AGENTS_FILE}", exc)
 
 
 ToolConfig = dict[str, dict[str, bool]]  # agent_name -> {tool_name: enabled}
@@ -76,8 +81,8 @@ def _load_tools_config() -> ToolConfig:
                     for agent, tools in data.items()
                     if isinstance(tools, dict)
                 }
-        except Exception:
-            pass
+        except Exception as exc:
+            _warn_config_error(f"failed to load {TOOLS_CONFIG_FILE}", exc)
     return {}
 
 
@@ -91,8 +96,8 @@ def _save_tools_config(config: ToolConfig) -> None:
             json.dumps(config, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        _warn_config_error(f"failed to save {TOOLS_CONFIG_FILE}", exc)
 
 
 UserProfile = dict[str, str]  # профиль пользователя
@@ -111,8 +116,8 @@ def _load_user_profile() -> UserProfile:
                     for key, value in data.items()
                     if isinstance(value, (str, int, float, bool))
                 }
-        except Exception:
-            pass
+        except Exception as exc:
+            _warn_config_error(f"failed to load {USER_PROFILE_FILE}", exc)
     return {"name": "Пользователь", "role": "", "preferences": "", "context": ""}
 
 
@@ -126,8 +131,8 @@ def _save_user_profile(profile: UserProfile) -> None:
             json.dumps(profile, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        _warn_config_error(f"failed to save {USER_PROFILE_FILE}", exc)
 
 
 def is_tool_enabled(agent: str, tool_name: str, default: bool = True) -> bool:
@@ -160,8 +165,8 @@ def load_available_models() -> list[str]:
             data = json.loads(AVAILABLE_MODELS_FILE.read_text(encoding="utf-8"))
             if isinstance(data, list):
                 return [str(m) for m in data if isinstance(m, str)]
-        except Exception:
-            pass
+        except Exception as exc:
+            _warn_config_error(f"failed to load {AVAILABLE_MODELS_FILE}", exc)
     return []
 
 
@@ -172,8 +177,8 @@ def _load_models_file() -> dict[str, str]:
             import json
             data = json.loads(MODELS_FILE.read_text(encoding="utf-8"))
             return {k: str(v) for k, v in data.items() if isinstance(v, str)}
-        except Exception:
-            pass
+        except Exception as exc:
+            _warn_config_error(f"failed to load {MODELS_FILE}", exc)
     return {}
 
 
@@ -195,7 +200,7 @@ class Settings:
     max_consecutive_errors: int = field(default_factory=lambda: int(os.getenv("AGENT_MAX_ERRORS", "2")))
     log_dir: Path = field(default_factory=lambda: Path(os.getenv("AGENT_LOG_DIR", "logs")))
     memory_file: Path = field(default_factory=lambda: Path(os.getenv("AGENT_MEMORY_FILE", "data/chat-memory.json")))
-    workspace_root: Path = field(default_factory=lambda: Path(os.getenv("AGENT_WORKSPACE", "D:/Projects")))
+    workspace_root: Path = field(default_factory=lambda: Path(os.getenv("AGENT_WORKSPACE", str(Path(__file__).resolve().parents[2]))))
     telegram_api_id: str | None = field(default_factory=lambda: os.getenv("TELEGRAM_API_ID"))
     telegram_api_hash: str | None = field(default_factory=lambda: os.getenv("TELEGRAM_API_HASH"))
     user_profile: UserProfile = field(default_factory=_load_user_profile)

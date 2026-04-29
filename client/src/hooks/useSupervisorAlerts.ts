@@ -6,8 +6,10 @@ const WS_URL = "ws://127.0.0.1:8001";
 const MAX_ALERTS = 20;
 
 function normalizeAlert(raw: any): SupervisorAlert | null {
-	if (!raw || raw.event !== "supervisor_alert") return null;
-	const alert = raw.payload?.event === "supervisor_alert" ? raw.payload : raw;
+	if (!raw) return null;
+	const direct = raw?.payload?.type ? raw : null;
+	const wrapped = raw?.event === "supervisor_alert" && raw?.payload ? raw.payload : null;
+	const alert = direct ?? wrapped;
 	if (!alert?.payload?.type) return null;
 	return {
 		event: "supervisor_alert",
