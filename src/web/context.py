@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections import deque
 from threading import Event
 from typing import Any
 
@@ -36,6 +37,9 @@ class ServerContext:
         self.confirmation_store = ConfirmationStore(self.settings.workspace_root / "data" / "pending_confirm.json")
         self._lock = threading.Lock()
         self._current_runtime: AgentRuntime | None = None
+        self._operator_event_seq = 0
+        self._operator_event_history: deque[dict[str, Any]] = deque(maxlen=1000)
+        self._operator_subscribers: set[tuple[Any, Any]] = set()
         self._pending_confirmation: dict[str, Any] | None = self.confirmation_store.load()
         self._run_controllers: dict[str, RunController] = {}
         self._restore_runs()
@@ -53,21 +57,21 @@ class ServerContext:
         )
         self.supervisor.start()
 
-        # Триггер автономного запуска директора при алертах
+        # Триггер автономного запуска оператора при алертах
         self._supervisor_trigger = SupervisorTrigger(
-            is_director_busy=lambda: self.get_runtime() is not None,
-            run_director=self._run_director_autonomous,
+            is_operator_busy=lambda: self.get_runtime() is not None,
+            run_operator=self._run_operator_autonomous,
             cooldown=90.0,
         )
         self._supervisor_trigger.start()
         self._autonomous_run_callback: Any = None
 
     def set_autonomous_run_callback(self, callback: Any) -> None:
-        """Устанавливает колбэк для автономного запуска директора (задаётся из SSEStream)."""
+        """Устанавливает колбэк для автономного запуска оператора (задаётся из SSEStream)."""
         self._autonomous_run_callback = callback
 
-    def _run_director_autonomous(self, message: str) -> None:
-        """Запускает директора автономно — вызывается SupervisorTrigger."""
+    def _run_operator_autonomous(self, message: str) -> None:
+        """Запускает оператора автономно — вызывается SupervisorTrigger."""
         if self._autonomous_run_callback is not None:
             try:
                 self._autonomous_run_callback(message)
@@ -82,7 +86,7 @@ class ServerContext:
         }
         with self._supervisor_lock:
             self._supervisor_alerts.append(alert)
-        # Передаём алерт триггеру для автономного запуска директора
+        # Передаём алерт триггеру для автономного запуска оператора
         self._supervisor_trigger.on_alert(alert)
         # Рассылаем в реальном времени всем WS-подписчикам
         try:
@@ -134,17 +138,91 @@ class ServerContext:
         with self._lock:
             self._current_runtime = runtime
 
+    def clear_runtime(self, runtime: AgentRuntime | None = None) -> None:
+        with self._lock:
+            if runtime is None or self._current_runtime is runtime:
+                self._current_runtime = None
+
     def get_runtime(self) -> AgentRuntime | None:
         with self._lock:
             return self._current_runtime
 
     def cancel_runtime(self) -> bool:
+        # Отменяем клиент оператора И все активные run саб-агентов. Без этого,
+        # пока оператор синхронно ждёт delegate_task/delegate_parallel, отмена
+        # никогда не доходит до заблокированного саб-агента, и сессия не завершается.
         with self._lock:
-            if self._current_runtime is not None:
-                self._current_runtime.cancel()
-                self._current_runtime = None
-                return True
-            return False
+            runtime = self._current_runtime
+            controllers = list(self._run_controllers.values())
+        for controller in controllers:
+            try:
+                controller.cancel()
+            except Exception:
+                pass
+        if runtime is not None:
+            runtime.cancel()
+            return True
+        return bool(controllers)
+
+    # --- Подписка на события оператора ---
+
+    def publish_operator_event(self, event: dict[str, Any]) -> dict[str, Any]:
+        with self._lock:
+            self._operator_event_seq += 1
+            record = dict(event)
+            record["seq"] = self._operator_event_seq
+            self._operator_event_history.append(record)
+            subscribers = list(self._operator_subscribers)
+        for loop, queue in subscribers:
+            try:
+                loop.call_soon_threadsafe(self._put_operator_event_nowait, queue, record)
+            except Exception:
+                pass
+        return record
+
+    def _put_operator_event_nowait(self, queue: Any, event: dict[str, Any]) -> None:
+        try:
+            queue.put_nowait(event)
+        except Exception:
+            pass
+
+    def get_operator_event_seq(self) -> int:
+        with self._lock:
+            return self._operator_event_seq
+
+    def get_operator_events_since(self, since_seq: int) -> list[dict[str, Any]]:
+        with self._lock:
+            return [
+                dict(event)
+                for event in self._operator_event_history
+                if int(event.get("seq", 0)) > since_seq
+            ]
+
+    def add_operator_subscriber(self, loop: Any, queue: Any) -> tuple[Any, Any]:
+        subscriber = (loop, queue)
+        with self._lock:
+            self._operator_subscribers.add(subscriber)
+        return subscriber
+
+    def add_operator_subscriber_with_replay(
+        self,
+        loop: Any,
+        queue: Any,
+        since_seq: int,
+    ) -> tuple[tuple[Any, Any], list[dict[str, Any]]]:
+        subscriber = (loop, queue)
+        with self._lock:
+            self._operator_subscribers.add(subscriber)
+            replay = [
+                dict(event)
+                for event in self._operator_event_history
+                if int(event.get("seq", 0)) > since_seq
+            ]
+        return subscriber, replay
+
+    def remove_operator_subscriber(self, subscriber: tuple[Any, Any]) -> None:
+        with self._lock:
+            self._operator_subscribers.discard(subscriber)
 
     # --- Управление подтверждениями ---
 
@@ -246,6 +324,10 @@ class ServerContext:
     def read_artifact(self, run_id: str, name: str) -> dict[str, Any]:
         return self.artifact_store.read(run_id, name)
 
+    def read_artifact_bytes(self, run_id: str, name: str) -> tuple[bytes, str] | None:
+        """Сырые байты артефакта + mime_type — для прямой HTTP-отдачи (картинки и т.п.)."""
+        return self.artifact_store.read_bytes(run_id, name)
+
     def list_artifacts(self, run_id: str) -> list[dict[str, Any]]:
         return self.artifact_store.list(run_id)
 
@@ -278,7 +360,7 @@ class ServerContext:
     # --- Реестр активных run ---
 
     def post_outbox_message(self, run_id: str, message: str, sender: str = "") -> None:
-        """Саб-агент отправляет произвольное сообщение директору через шину."""
+        """Саб-агент отправляет произвольное сообщение оператору через шину."""
         self.message_bus.publish(
             msg_type="outbox_message",
             sender=sender or run_id,
@@ -301,8 +383,8 @@ class ServerContext:
         _bus_events = {
             "sub_agent_started": "run_started",
             "sub_agent_finished": "run_finished",
-            "sub_agent_question": "question_to_director",
-            "sub_agent_answer": "answer_from_director",
+            "sub_agent_question": "question_to_operator",
+            "sub_agent_answer": "answer_from_operator",
             "sub_agent_task_replaced": "task_replaced",
             "sub_agent_policy_violation": "system_event",
         }
@@ -397,7 +479,7 @@ class ServerContext:
             self.run_registry.update(
                 run_id,
                 status=status,
-                result=str(payload.get("result", "")),
+                result=str(payload.get("summary") or payload.get("result", "")),
                 changed_files=[str(item) for item in payload.get("changed_files", []) if str(item).strip()],
                 verification=[str(item) for item in payload.get("verification", []) if str(item).strip()],
                 risks=[str(item) for item in payload.get("risks", []) if str(item).strip()],

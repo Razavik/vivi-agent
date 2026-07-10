@@ -19,20 +19,48 @@ npm install
 
 ## Запуск
 
-1. Запустите бэкенд:
+### Быстрый запуск
 
 ```bash
-python -m src.web.server
+start.bat
 ```
 
-2. В отдельном терминале запустите React-клиент:
+`start.bat` запускает приложение через Electron (`npm run app`) без упаковки `dist`.
+`start-exe.bat` запускает собранный `dist-app\Vivi\Vivi.exe`.
+
+### Сборка EXE
 
 ```bash
-cd client ; npm run dev
+build.bat
 ```
 
-Обычно клиент будет доступен по адресу:
+Готовое приложение появится в `dist-app\Vivi\Vivi.exe`.
+
+### Ручной запуск
+
+Backend:
+
+```bash
+uvicorn src.web.asgi:app --host 127.0.0.1 --port 8000 --reload
+```
+
+Или через Python-лаунчер:
+
+```bash
+python start_server.py
+```
+
+Frontend:
+
+```bash
+cd client
+npm run dev
+```
+
+Адреса:
 
 ```text
-http://localhost:5173
+Backend:  http://127.0.0.1:8000
+WebSocket: ws://127.0.0.1:8000/ws
+Frontend: http://localhost:5500
 ```

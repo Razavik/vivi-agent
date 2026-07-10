@@ -17,6 +17,7 @@ class ChatMessage:
     content: str
     thought: str | None = None
     plan: list[PlanItem] = field(default_factory=list)
+    interrupted_by_user: bool = False
 
 
 @dataclass(slots=True)
@@ -36,6 +37,7 @@ class SessionState:
     memory_chat_history: list[ChatMessage] = field(default_factory=list)
     consecutive_errors: int = 0
     plan: list[PlanItem] = field(default_factory=list)
+    live_answer: str = ""
 
     def add_observation(self, observation: Observation) -> None:
         self.observations.append(observation)
@@ -49,9 +51,16 @@ class SessionState:
         content: str,
         thought: str | None = None,
         plan: list[PlanItem] | None = None,
+        interrupted_by_user: bool = False,
     ) -> None:
         self.chat_history.append(
-            ChatMessage(role=role, content=content, thought=thought, plan=list(plan or []))
+            ChatMessage(
+                role=role,
+                content=content,
+                thought=thought,
+                plan=list(plan or []),
+                interrupted_by_user=interrupted_by_user,
+            )
         )
 
     def compact_observations(self) -> list[dict[str, Any]]:
@@ -72,6 +81,8 @@ class SessionState:
         items: list[dict[str, Any]] = []
         for item in self.chat_history[-12:]:
             record: dict[str, Any] = {"role": item.role, "content": item.content}
+            if item.interrupted_by_user:
+                record["interrupted_by_user"] = True
             if item.plan:
                 record["plan"] = [
                     {"id": plan_item.id, "content": plan_item.content, "status": plan_item.status}
@@ -92,6 +103,7 @@ class SessionState:
                 {
                     "role": item.role,
                     "content": item.content,
+                    **({"interrupted_by_user": True} if item.interrupted_by_user else {}),
                     **(
                         {
                             "plan": [

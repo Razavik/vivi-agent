@@ -1,21 +1,31 @@
-﻿import { useState, useMemo, useEffect } from "react";
+import { useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import styles from "./ToolsPage.module.css";
 import type { Tool } from "../../types";
 import { Select } from "../../components/Select/Select";
+import { fetchJson } from "../../utils/http";
 
 interface ToolsPageProps {
 	tools: Tool[];
 }
 
 const AGENT_COLORS: Record<string, string> = {
-	director: "#10a37f",
+	operator: "#c084fc",
 	file: "#7eb0ff",
 	system: "#f6d365",
-	web: "#6ee7c7",
+	web: "#f0abfc",
 	telegram: "#5ba4cf",
 };
 
-const COLOR_PALETTE = ["#a78bfa", "#f87171", "#fb923c", "#34d399", "#60a5fa", "#f472b6", "#facc15"];
+const COLOR_PALETTE = [
+	"#a78bfa",
+	"#f87171",
+	"#fb923c",
+	"#ec4899",
+	"#60a5fa",
+	"#f472b6",
+	"#facc15",
+];
 
 function getAgentColor(name: string, index: number): string {
 	return AGENT_COLORS[name] ?? COLOR_PALETTE[index % COLOR_PALETTE.length];
@@ -41,8 +51,8 @@ function getRiskClass(level: number): string {
 	return "riskCritical";
 }
 
-// Тип для конфигурации агентов из agents.json
 type AgentsConfig = Record<string, AgentCfg>;
+type ToolStatusFilter = "all" | "enabled" | "disabled";
 
 interface ToolEntry {
 	name: string;
@@ -50,129 +60,221 @@ interface ToolEntry {
 	required?: boolean;
 }
 
+type ToolsPageQueryData = {
+	agentsData?: { config?: AgentsConfig };
+	modelsData?: {
+		models?: Record<string, string>;
+		default?: string;
+		custom_models?: string[];
+	};
+	availData?: { models?: string[] };
+	ollamaData?: { models?: string[] };
+	appSettings?: { pc_control_mode?: boolean };
+};
+
+const ORCHESTRATOR_TOOL_NAMES = new Set([
+	"delegate_task",
+	"delegate_parallel",
+	"get_agent_memory",
+	"view_runs",
+	"cancel_run",
+	"pause_run",
+	"resume_run",
+	"message_run",
+	"replace_task_run",
+	"reprioritize_run",
+	"get_world_state",
+	"wait_for_event",
+]);
+
+const RUN_TOOL_NAMES = new Set([
+	"view_runs",
+	"cancel_run",
+	"pause_run",
+	"resume_run",
+	"message_run",
+	"replace_task_run",
+	"reprioritize_run",
+	"get_world_state",
+	"wait_for_event",
+]);
+
+const PC_TOOL_NAMES = new Set([
+	"get_screen_info",
+	"take_screenshot",
+	"read_image",
+	"system_mouse_move",
+	"system_mouse_nudge",
+	"system_mouse_click",
+	"system_mouse_double_click",
+	"system_mouse_scroll",
+	"system_mouse_drag",
+	"system_type_text",
+	"system_key_press",
+	"list_ui_elements",
+	"click_ui_element",
+	"focus_ui_element",
+]);
+
 export function ToolsPage({ tools }: ToolsPageProps) {
+	const queryClient = useQueryClient();
 	const [search, setSearch] = useState("");
-	const [selectedAgent, setSelectedAgent] = useState<string>("director");
-	const [agentsConfig, setAgentsConfig] = useState<AgentsConfig>({});
-	const [loaded, setLoaded] = useState(false);
-	const [models, setModels] = useState<Record<string, string>>({});
-	const [defaultModel, setDefaultModel] = useState("");
-	const [availableModels, setAvailableModels] = useState<string[]>([]);
-	const [downloadedModels, setDownloadedModels] = useState<string[]>([]);
+	const [selectedAgent, setSelectedAgent] = useState<string>("operator");
 	const [showAddAgent, setShowAddAgent] = useState(false);
 	const [newAgentName, setNewAgentName] = useState("");
 	const [newAgentDisplay, setNewAgentDisplay] = useState("");
 	const [newAgentPrompt, setNewAgentPrompt] = useState("");
+	const [statusFilter, setStatusFilter] = useState<ToolStatusFilter>("all");
 
-	// Загрузка конфигурации агентов, моделей и списка Ollama
-	useEffect(() => {
-		const load = async () => {
-			try {
-				const [agentsRes, modelsRes, availRes, ollamaRes] = await Promise.all([
-					fetch("/api/agents-config"),
-					fetch("/api/models"),
-					fetch("/api/available-models"),
-					fetch("/api/ollama-models"),
+	const { data, isLoading } = useQuery({
+		queryKey: ["tools-page"],
+		queryFn: async () => {
+			const [agentsData, modelsData, availData, ollamaData, appSettings] =
+				await Promise.all([
+					fetchJson<{ config?: AgentsConfig }>("/api/agents-config", {
+						config: {},
+					}),
+					fetchJson<{
+						models?: Record<string, string>;
+						default?: string;
+						custom_models?: string[];
+					}>("/api/models", {
+						models: {},
+						default: "",
+						custom_models: [],
+					}),
+					fetchJson<{ models?: string[] }>("/api/available-models", {
+						models: [],
+					}),
+					fetchJson<{ models?: string[] }>("/api/ollama-models", {
+						models: [],
+					}),
+					fetchJson<{ pc_control_mode?: boolean }>(
+						"/api/app-settings",
+						{ pc_control_mode: false },
+					),
 				]);
-				const agentsData = await agentsRes.json();
-				const modelsData = await modelsRes.json();
-				const availData = await availRes.json();
-				const ollamaData = await ollamaRes.json();
-				if (agentsData.config) {
-					setAgentsConfig(agentsData.config);
-					const first = Object.keys(agentsData.config)[0];
-					if (first) setSelectedAgent(first);
-				}
-				if (modelsData.models) setModels(modelsData.models);
-				if (modelsData.default) setDefaultModel(modelsData.default);
-				if (availData.models) setAvailableModels(availData.models);
-				if (ollamaData.models) setDownloadedModels(ollamaData.models);
-			} catch (e) {
-				console.error("Ошибка загрузки:", e);
-			} finally {
-				setLoaded(true);
-			}
-		};
-		load();
-	}, []);
+			return {
+				agentsData,
+				modelsData,
+				availData,
+				ollamaData,
+				appSettings,
+			};
+		},
+	});
 
-	// Отправка конфига на сервер (тихая, без состояния)
-	const saveToServer = (config: AgentsConfig) => {
-		fetch("/api/agents-config", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ config }),
-		}).catch((e) => console.error("Ошибка сохранения:", e));
-	};
+	const agentsConfig = useMemo(
+		() => data?.agentsData.config ?? {},
+		[data?.agentsData.config],
+	);
+	const models = useMemo(
+		() => data?.modelsData.models ?? {},
+		[data?.modelsData.models],
+	);
+	const defaultModel = data?.modelsData.default ?? "";
+	const customModels = useMemo(
+		() => data?.modelsData.custom_models ?? [],
+		[data?.modelsData.custom_models],
+	);
+	const pcControlMode = Boolean(data?.appSettings.pc_control_mode);
+	const availableModels = useMemo(
+		() => data?.availData.models ?? [],
+		[data?.availData.models],
+	);
+	const downloadedModels = useMemo(
+		() => data?.ollamaData.models ?? [],
+		[data?.ollamaData.models],
+	);
 
-	// Сменить модель агента
-	const setAgentModel = (agent: string, model: string) => {
-		const updated = { ...models, [agent]: model };
-		setModels(updated);
-		fetch("/api/models", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ models: updated }),
-		}).catch((e) => console.error("Ошибка сохранения модели:", e));
-	};
-
-	// Добавить нового агента в agents.json
-	const addAgent = async () => {
-		const key = newAgentName.trim().toLowerCase().replace(/\s+/g, "_");
-		if (!key) return;
-		const updated: AgentsConfig = {
-			...agentsConfig,
-			[key]: {
-				display_name: newAgentDisplay.trim() || key,
-				prompt_path: newAgentPrompt.trim() || `prompts/agents/${key}.txt`,
-				tools: [],
-			},
-		};
-		try {
-			await fetch("/api/agents-config", {
+	const saveAgentsConfig = useMutation({
+		mutationFn: (config: AgentsConfig) =>
+			fetchJson<unknown>("/api/agents-config", null, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ config: updated }),
-			});
-			setAgentsConfig(updated);
-			setSelectedAgent(key);
-			setShowAddAgent(false);
-			setNewAgentName("");
-			setNewAgentDisplay("");
-			setNewAgentPrompt("");
-		} catch (e) {
-			console.error("Ошибка добавления агента:", e);
-		}
-	};
-
-	// Переключение инструмента — меняем enabled и сразу сохраняем
-	const toggleTool = (agent: string, toolName: string) => {
-		setAgentsConfig((prev) => {
-			const cfg = prev[agent] || {};
-			const tools: ToolEntry[] = (cfg.tools || []).map((t) =>
-				typeof t === "string" ? { name: t, enabled: true } : (t as ToolEntry),
+				body: JSON.stringify({ config }),
+			}),
+		onMutate: async (config) => {
+			await queryClient.cancelQueries({ queryKey: ["tools-page"] });
+			const previous = queryClient.getQueryData<ToolsPageQueryData>([
+				"tools-page",
+			]);
+			queryClient.setQueryData<ToolsPageQueryData>(
+				["tools-page"],
+				(current) => {
+					if (!current) return current;
+					return {
+						...current,
+						agentsData: {
+							...(current.agentsData ?? {}),
+							config,
+						},
+					};
+				},
 			);
-			const updated = tools.map((t) =>
-				t.name === toolName ? { ...t, enabled: !t.enabled } : t,
-			);
-			const next = { ...prev, [agent]: { ...cfg, tools: updated } };
-			saveToServer(next);
-			return next;
-		});
-	};
+			return { previous };
+		},
+		onError: (_error, _config, context) => {
+			if (context?.previous) {
+				queryClient.setQueryData(["tools-page"], context.previous);
+			}
+		},
+		onSettled: () => {
+			void queryClient.invalidateQueries({ queryKey: ["tools-page"] });
+		},
+	});
 
-	// Список агентов из agentsConfig + из tools
+	const saveModels = useMutation({
+		mutationFn: (updated: Record<string, string>) =>
+			fetchJson<unknown>("/api/models", null, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					models: updated,
+					custom_models: data?.modelsData.custom_models ?? [],
+				}),
+			}),
+		onSuccess: () => {
+			void queryClient.invalidateQueries({ queryKey: ["tools-page"] });
+		},
+	});
+
 	const availableAgents = useMemo(() => {
 		const fromConfig = Object.keys(agentsConfig);
 		const fromTools = tools.map((t) => t.agent).filter(Boolean) as string[];
-		const merged = [...new Set([...fromConfig, ...fromTools])];
-		return merged;
+		return [...new Set([...fromConfig, ...fromTools])];
 	}, [agentsConfig, tools]);
 
-	// Отображаемое имя агента
 	const getLabel = (key: string) => agentsConfig[key]?.display_name || key;
-	const getColor = (key: string) => getAgentColor(key, availableAgents.indexOf(key));
-	const downloadedSet = useMemo(() => new Set(downloadedModels), [downloadedModels]);
+	const getColor = (key: string) =>
+		getAgentColor(key, availableAgents.indexOf(key));
+	const downloadedSet = useMemo(
+		() => new Set(downloadedModels),
+		[downloadedModels],
+	);
+	const getToolEntry = (
+		agent: string,
+		toolName: string,
+	): ToolEntry | string | undefined => {
+		const toolsList = agentsConfig[agent]?.tools || [];
+		return toolsList.find((t) =>
+			typeof t === "string"
+				? t === toolName
+				: (t as ToolEntry).name === toolName,
+		);
+	};
+	const getToolEnabled = (agent: string, toolName: string): boolean => {
+		const entry = getToolEntry(agent, toolName);
+		if (entry === undefined || typeof entry === "string") return true;
+		return Boolean(entry.required) || entry.enabled !== false;
+	};
+	const hiddenToolNames =
+		selectedAgent === "operator"
+			? pcControlMode
+				? ORCHESTRATOR_TOOL_NAMES
+				: PC_TOOL_NAMES
+			: null;
+
 	const modelOptions = useMemo(
 		() => [
 			{ value: "", label: `по умолчанию (${defaultModel})` },
@@ -181,6 +283,7 @@ export function ToolsPage({ tools }: ToolsPageProps) {
 					[
 						...downloadedModels,
 						...availableModels,
+						...customModels,
 						...Object.values(models).filter(Boolean),
 						defaultModel,
 					].filter(Boolean),
@@ -191,47 +294,165 @@ export function ToolsPage({ tools }: ToolsPageProps) {
 				dot: downloadedSet.has(m) ? "#22c55e" : undefined,
 			})),
 		],
-		[availableModels, defaultModel, downloadedModels, downloadedSet, models],
+		[
+			availableModels,
+			customModels,
+			defaultModel,
+			downloadedModels,
+			downloadedSet,
+			models,
+		],
 	);
 
-	// Фильтрация инструментов для выбранного агента
+	const allAgentTools = useMemo(() => {
+		const byName = new Map<string, Tool>();
+		for (const tool of tools) {
+			if (tool.agent === selectedAgent) {
+				if (
+					selectedAgent === "operator" &&
+					RUN_TOOL_NAMES.has(tool.name)
+				)
+					continue;
+				if (
+					selectedAgent === "operator" &&
+					hiddenToolNames?.has(tool.name)
+				)
+					continue;
+				byName.set(tool.name, tool);
+			}
+		}
+		const configuredTools = agentsConfig[selectedAgent]?.tools || [];
+		for (const entry of configuredTools) {
+			const name = typeof entry === "string" ? entry : entry.name;
+			if (selectedAgent === "operator" && RUN_TOOL_NAMES.has(name))
+				continue;
+			if (
+				!name ||
+				(selectedAgent === "operator" && hiddenToolNames?.has(name))
+			)
+				continue;
+			if (!name || byName.has(name)) continue;
+			byName.set(name, {
+				name,
+				description:
+					"Инструмент отключён и не передаётся оркестратору.",
+				agent: selectedAgent,
+			});
+		}
+		return Array.from(byName.values()).sort((a, b) => {
+			const aIndex = configuredTools.findIndex((entry) =>
+				typeof entry === "string"
+					? entry === a.name
+					: entry.name === a.name,
+			);
+			const bIndex = configuredTools.findIndex((entry) =>
+				typeof entry === "string"
+					? entry === b.name
+					: entry.name === b.name,
+			);
+			if (aIndex === -1 && bIndex === -1)
+				return a.name.localeCompare(b.name);
+			if (aIndex === -1) return 1;
+			if (bIndex === -1) return -1;
+			return aIndex - bIndex;
+		});
+	}, [agentsConfig, hiddenToolNames, selectedAgent, tools]);
+
+	const toolStats = useMemo(() => {
+		let enabled = 0;
+		let disabled = 0;
+		for (const tool of allAgentTools) {
+			if (getToolEnabled(selectedAgent, tool.name)) {
+				enabled += 1;
+			} else {
+				disabled += 1;
+			}
+		}
+		return { enabled, disabled, total: allAgentTools.length };
+	}, [allAgentTools, selectedAgent]);
+
 	const agentTools = useMemo(() => {
 		const q = search.toLowerCase();
-		return tools.filter((t) => {
-			if (t.agent !== selectedAgent) return false;
-			if (q && !t.name.toLowerCase().includes(q) && !t.description.toLowerCase().includes(q))
+		return allAgentTools.filter((t) => {
+			const enabled = getToolEnabled(selectedAgent, t.name);
+			if (statusFilter === "enabled" && !enabled) return false;
+			if (statusFilter === "disabled" && enabled) return false;
+			if (
+				q &&
+				!t.name.toLowerCase().includes(q) &&
+				!t.description.toLowerCase().includes(q)
+			) {
 				return false;
+			}
 			return true;
 		});
-	}, [tools, selectedAgent, search]);
+	}, [allAgentTools, selectedAgent, search, statusFilter]);
 
-	// Включить все инструменты
+	const saveConfig = (config: AgentsConfig) => {
+		saveAgentsConfig.mutate(config);
+	};
+
+	const setAgentModel = (agent: string, model: string) => {
+		const updated = { ...models, [agent]: model };
+		saveModels.mutate(updated);
+	};
+
+	const addAgent = async () => {
+		const key = newAgentName.trim().toLowerCase().replace(/\s+/g, "_");
+		if (!key) return;
+		const updated: AgentsConfig = {
+			...agentsConfig,
+			[key]: {
+				display_name: newAgentDisplay.trim() || key,
+				prompt_path:
+					newAgentPrompt.trim() || `prompts/agents/${key}.txt`,
+				tools: [],
+			},
+		};
+		saveConfig(updated);
+		setSelectedAgent(key);
+		setShowAddAgent(false);
+		setNewAgentName("");
+		setNewAgentDisplay("");
+		setNewAgentPrompt("");
+	};
+
+	const toggleTool = (agent: string, toolName: string) => {
+		const cfg = agentsConfig[agent] || {};
+		const entries: ToolEntry[] = (cfg.tools || []).map((t) =>
+			typeof t === "string"
+				? { name: t, enabled: true }
+				: (t as ToolEntry),
+		);
+		const updated = entries.map((t) =>
+			t.name === toolName ? { ...t, enabled: !t.enabled } : t,
+		);
+		saveConfig({ ...agentsConfig, [agent]: { ...cfg, tools: updated } });
+	};
+
 	const enableAll = () => {
-		setAgentsConfig((prev) => {
-			const cfg = prev[selectedAgent] || {};
-			const tools: ToolEntry[] = (cfg.tools || []).map((t) =>
-				typeof t === "string"
-					? { name: t, enabled: true }
-					: { ...(t as ToolEntry), enabled: true },
-			);
-			const next = { ...prev, [selectedAgent]: { ...cfg, tools } };
-			saveToServer(next);
-			return next;
+		const cfg = agentsConfig[selectedAgent] || {};
+		const entries: ToolEntry[] = (cfg.tools || []).map((t) =>
+			typeof t === "string"
+				? { name: t, enabled: true }
+				: { ...(t as ToolEntry), enabled: true },
+		);
+		saveConfig({
+			...agentsConfig,
+			[selectedAgent]: { ...cfg, tools: entries },
 		});
 	};
 
-	// Отключить все инструменты
 	const disableAll = () => {
-		setAgentsConfig((prev) => {
-			const cfg = prev[selectedAgent] || {};
-			const tools: ToolEntry[] = (cfg.tools || []).map((t) =>
-				typeof t === "string"
-					? { name: t, enabled: false }
-					: { ...(t as ToolEntry), enabled: false },
-			);
-			const next = { ...prev, [selectedAgent]: { ...cfg, tools } };
-			saveToServer(next);
-			return next;
+		const cfg = agentsConfig[selectedAgent] || {};
+		const entries: ToolEntry[] = (cfg.tools || []).map((t) =>
+			typeof t === "string"
+				? { name: t, enabled: false }
+				: { ...(t as ToolEntry), enabled: false },
+		);
+		saveConfig({
+			...agentsConfig,
+			[selectedAgent]: { ...cfg, tools: entries },
 		});
 	};
 
@@ -269,11 +490,40 @@ export function ToolsPage({ tools }: ToolsPageProps) {
 						value={search}
 						onChange={(e) => setSearch(e.target.value)}
 					/>
+					<div
+						className={styles.statusFilters}
+						aria-label="Фильтр инструментов"
+					>
+						<button
+							className={`${styles.statusFilter} ${statusFilter === "all" ? styles.statusFilterActive : ""}`}
+							onClick={() => setStatusFilter("all")}
+						>
+							Все <span>{toolStats.total}</span>
+						</button>
+						<button
+							className={`${styles.statusFilter} ${statusFilter === "enabled" ? styles.statusFilterActive : ""}`}
+							onClick={() => setStatusFilter("enabled")}
+						>
+							Включённые <span>{toolStats.enabled}</span>
+						</button>
+						<button
+							className={`${styles.statusFilter} ${statusFilter === "disabled" ? styles.statusFilterActive : ""}`}
+							onClick={() => setStatusFilter("disabled")}
+						>
+							Отключённые <span>{toolStats.disabled}</span>
+						</button>
+					</div>
 					<div className={styles.actions}>
-						<button className={styles.actionBtn} onClick={enableAll}>
+						<button
+							className={styles.actionBtn}
+							onClick={enableAll}
+						>
 							Включить все
 						</button>
-						<button className={styles.actionBtn} onClick={disableAll}>
+						<button
+							className={styles.actionBtn}
+							onClick={disableAll}
+						>
 							Отключить все
 						</button>
 					</div>
@@ -281,31 +531,38 @@ export function ToolsPage({ tools }: ToolsPageProps) {
 			</div>
 
 			<div className={styles.agentInfo}>
-				<span className={styles.agentDot} style={{ background: getColor(selectedAgent) }} />
-				<span className={styles.agentTitle}>{getLabel(selectedAgent)}</span>
-				<span className={styles.agentCount}>{agentTools.length} инструментов</span>
+				<span
+					className={styles.agentDot}
+					style={{ background: getColor(selectedAgent) }}
+				/>
+				<span className={styles.agentTitle}>
+					{getLabel(selectedAgent)}
+				</span>
+				<span className={styles.agentCount}>
+					{agentTools.length} из {toolStats.total} инструментов
+				</span>
 				<div className={styles.modelSelect}>
 					<label className={styles.label}>Модель:</label>
 					<Select
 						value={models[selectedAgent] || ""}
 						onChange={(v) => setAgentModel(selectedAgent, v)}
 						placeholder={defaultModel || "по умолчанию"}
-							options={modelOptions}
-						/>
+						options={modelOptions}
+					/>
 				</div>
 			</div>
 
 			<div className={styles.body}>
-				{!loaded ? null : agentTools.length === 0 ? (
-					<div className={styles.empty}>Нет инструментов для этого агента</div>
+				{isLoading ? null : agentTools.length === 0 ? (
+					<div className={styles.empty}>
+						Нет инструментов для этого агента
+					</div>
 				) : (
 					<div className={styles.grid}>
 						{agentTools.map((tool) => {
-							const toolsList = agentsConfig[selectedAgent]?.tools || [];
-							const entry = toolsList.find((t) =>
-								typeof t === "string"
-									? t === tool.name
-									: (t as ToolEntry).name === tool.name,
+							const entry = getToolEntry(
+								selectedAgent,
+								tool.name,
 							);
 							const typedEntry =
 								typeof entry === "object" && entry !== null
@@ -326,7 +583,11 @@ export function ToolsPage({ tools }: ToolsPageProps) {
 									onClick={
 										isRequired
 											? undefined
-											: () => toggleTool(selectedAgent, tool.name)
+											: () =>
+													toggleTool(
+														selectedAgent,
+														tool.name,
+													)
 									}
 								>
 									<div className={styles.cardHead}>
@@ -361,19 +622,30 @@ export function ToolsPage({ tools }: ToolsPageProps) {
 										) : (
 											<label
 												className={styles.toggle}
-												onClick={(e) => e.stopPropagation()}
+												onClick={(e) =>
+													e.stopPropagation()
+												}
 											>
 												<input
 													type="checkbox"
 													checked={isEnabled}
 													onChange={() =>
-														toggleTool(selectedAgent, tool.name)
+														toggleTool(
+															selectedAgent,
+															tool.name,
+														)
 													}
 												/>
-												<span className={styles.toggleSlider} />
+												<span
+													className={
+														styles.toggleSlider
+													}
+												/>
 											</label>
 										)}
-										<span className={styles.toolName}>{tool.name}</span>
+										<span className={styles.toolName}>
+											{tool.name}
+										</span>
 										{tool.risk_level !== undefined && (
 											<span
 												className={`${styles.riskBadge} ${styles[getRiskClass(tool.risk_level)]}`}
@@ -382,25 +654,35 @@ export function ToolsPage({ tools }: ToolsPageProps) {
 											</span>
 										)}
 									</div>
-									<div className={styles.toolDesc}>{tool.description}</div>
+									<div className={styles.toolDesc}>
+										{tool.description}
+									</div>
 									{tool.args_schema &&
-										Object.keys(tool.args_schema).length > 0 && (
+										Object.keys(tool.args_schema).length >
+											0 && (
 											<div className={styles.toolArgs}>
-												{Object.entries(tool.args_schema).map(
-													([name, type]) => {
-														const isOpt = String(type).includes("?");
-														return (
-															<span
-																key={name}
-																className={`${styles.toolArg} ${isOpt ? styles.toolArgOpt : ""}`}
-															>
-																{name}
-																{isOpt ? "?" : ""}:{" "}
-																{String(type).replace("?", "")}
-															</span>
+												{Object.entries(
+													tool.args_schema,
+												).map(([name, type]) => {
+													const isOpt =
+														String(type).includes(
+															"?",
 														);
-													},
-												)}
+													return (
+														<span
+															key={name}
+															className={`${styles.toolArg} ${isOpt ? styles.toolArgOpt : ""}`}
+														>
+															{name}
+															{isOpt
+																? "?"
+																: ""}:{" "}
+															{String(
+																type,
+															).replace("?", "")}
+														</span>
+													);
+												})}
 											</div>
 										)}
 								</div>
@@ -410,39 +692,56 @@ export function ToolsPage({ tools }: ToolsPageProps) {
 				)}
 			</div>
 
-			{/* Модальное окно добавления агента */}
 			{showAddAgent && (
-				<div className={styles.modalOverlay} onClick={() => setShowAddAgent(false)}>
-					<div className={styles.modal} onClick={(e) => e.stopPropagation()}>
+				<div
+					className={styles.modalOverlay}
+					onClick={() => setShowAddAgent(false)}
+				>
+					<div
+						className={styles.modal}
+						onClick={(e) => e.stopPropagation()}
+					>
 						<h2 className={styles.modalTitle}>Новый агент</h2>
 						<div className={styles.modalField}>
-							<label className={styles.label}>Идентификатор (key)</label>
+							<label className={styles.label}>
+								Идентификатор (key)
+							</label>
 							<input
 								className={styles.modalInput}
 								type="text"
 								placeholder="my_agent"
 								value={newAgentName}
-								onChange={(e) => setNewAgentName(e.target.value)}
+								onChange={(e) =>
+									setNewAgentName(e.target.value)
+								}
 							/>
 						</div>
 						<div className={styles.modalField}>
-							<label className={styles.label}>Отображаемое имя</label>
+							<label className={styles.label}>
+								Отображаемое имя
+							</label>
 							<input
 								className={styles.modalInput}
 								type="text"
 								placeholder="Мой агент"
 								value={newAgentDisplay}
-								onChange={(e) => setNewAgentDisplay(e.target.value)}
+								onChange={(e) =>
+									setNewAgentDisplay(e.target.value)
+								}
 							/>
 						</div>
 						<div className={styles.modalField}>
-							<label className={styles.label}>Путь к промпту</label>
+							<label className={styles.label}>
+								Путь к промпту
+							</label>
 							<input
 								className={styles.modalInput}
 								type="text"
 								placeholder="prompts/agents/my_agent.txt"
 								value={newAgentPrompt}
-								onChange={(e) => setNewAgentPrompt(e.target.value)}
+								onChange={(e) =>
+									setNewAgentPrompt(e.target.value)
+								}
 							/>
 						</div>
 						<div className={styles.modalActions}>
@@ -466,4 +765,3 @@ export function ToolsPage({ tools }: ToolsPageProps) {
 		</div>
 	);
 }
-

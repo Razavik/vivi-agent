@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
@@ -61,6 +62,8 @@ class ChatMemoryStore:
 
             for i, item in enumerate(session_chat_history):
                 record = {"role": item.role, "content": item.content}
+                if item.interrupted_by_user:
+                    record["interrupted_by_user"] = True
                 if item.thought:
                     record["thought"] = item.thought
                 if item.plan:
@@ -111,6 +114,8 @@ class ChatMemoryStore:
             chat_history = list(base_history)
             for i, item in enumerate(session_chat_history):
                 record = {"role": item.role, "content": item.content}
+                if item.interrupted_by_user:
+                    record["interrupted_by_user"] = True
                 if item.thought:
                     record["thought"] = item.thought
                 if item.plan:
@@ -155,10 +160,12 @@ class ChatMemoryStore:
 
     def _write_unlocked(self, data: dict[str, Any]) -> None:
         serialized = json.dumps(data, ensure_ascii=False, indent=2)
+        parent = self.file_path.parent.resolve()
+        target = self.file_path.resolve()
         fd, temp_path = tempfile.mkstemp(
             prefix=f"{self.file_path.name}.",
             suffix=".tmp",
-            dir=str(self.file_path.parent),
+            dir=str(parent),
             text=True,
         )
         try:
@@ -166,7 +173,17 @@ class ChatMemoryStore:
                 temp_file.write(serialized)
                 temp_file.flush()
                 os.fsync(temp_file.fileno())
-            os.replace(temp_path, self.file_path)
+            last_error: OSError | None = None
+            for attempt in range(20):
+                try:
+                    os.replace(temp_path, target)
+                    last_error = None
+                    break
+                except PermissionError as exc:
+                    last_error = exc
+                    time.sleep(0.05 * (attempt + 1))
+            if last_error is not None:
+                raise last_error
         finally:
             try:
                 if os.path.exists(temp_path):

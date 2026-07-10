@@ -56,3 +56,4 @@ export function SupervisorAlerts({ alerts, onDismiss, onDismissAll }: Props) {
 		</div>
 	);
 }
+

@@ -49,6 +49,8 @@ class ActionStep:
             summary = str(summary)
         if not isinstance(raw_plan, list):
             raw_plan = []
+        if done and action.strip() != "finish_task":
+            raise ValidationError("Если done=true, поле action должно быть finish_task")
 
         allowed_statuses = {"pending", "in_progress", "completed"}
         plan: list[PlanTask] = []
@@ -95,6 +97,7 @@ class SubAgentResult:
     error: str = ""
     cancelled: bool = False
     raw_result: Any = None
+    image_urls: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -138,6 +141,7 @@ class SubAgentResult:
             error=error,
             cancelled=cancelled,
             raw_result=raw.get("result"),
+            image_urls=cls._string_list(raw.get("image_urls", parsed.get("image_urls", []))),
         )
 
     @staticmethod

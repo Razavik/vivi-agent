@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect } from "react";
+import { useCallback, useState, useRef, useEffect } from "react";
+import type { CSSProperties } from "react";
 import styles from "./Select.module.css";
 
 interface SelectOption {
@@ -13,11 +14,20 @@ interface SelectProps {
 	options: SelectOption[];
 	placeholder?: string;
 	className?: string;
+	style?: CSSProperties;
 }
 
-export function Select({ value, onChange, options, placeholder, className }: SelectProps) {
+export function Select({
+	value,
+	onChange,
+	options,
+	placeholder,
+	className,
+	style,
+}: SelectProps) {
 	const [isOpen, setIsOpen] = useState(false);
 	const [highlightedIndex, setHighlightedIndex] = useState(-1);
+	const [openUpward, setOpenUpward] = useState(false);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const listRef = useRef<HTMLDivElement>(null);
 
@@ -71,18 +81,42 @@ export function Select({ value, onChange, options, placeholder, className }: Sel
 		}
 	};
 
-	const scrollToHighlighted = () => {
+	const scrollToHighlighted = useCallback(() => {
 		if (highlightedIndex >= 0 && listRef.current) {
 			const highlightedElement = listRef.current.children[highlightedIndex] as HTMLElement;
 			if (highlightedElement) {
 				highlightedElement.scrollIntoView({ block: "nearest" });
 			}
 		}
-	};
+	}, [highlightedIndex]);
 
 	useEffect(() => {
 		scrollToHighlighted();
-	}, [highlightedIndex]);
+	}, [scrollToHighlighted]);
+
+	useEffect(() => {
+		if (!isOpen || !containerRef.current) return;
+
+		const updateDirection = () => {
+			const rect = containerRef.current?.getBoundingClientRect();
+			if (!rect) return;
+			const estimatedHeight = Math.min(280, Math.max(options.length * 40 + 8, 120));
+			const spaceBelow = window.innerHeight - rect.bottom;
+			const spaceAbove = rect.top;
+			setOpenUpward(
+				spaceBelow < estimatedHeight && spaceAbove > spaceBelow,
+			);
+		};
+
+		updateDirection();
+		window.addEventListener("resize", updateDirection);
+		window.addEventListener("scroll", updateDirection, true);
+
+		return () => {
+			window.removeEventListener("resize", updateDirection);
+			window.removeEventListener("scroll", updateDirection, true);
+		};
+	}, [isOpen, options.length]);
 
 	useEffect(() => {
 		const handleClickOutside = (e: MouseEvent) => {
@@ -103,7 +137,8 @@ export function Select({ value, onChange, options, placeholder, className }: Sel
 	return (
 		<div
 			ref={containerRef}
-			className={`${styles.container} ${isOpen ? styles.open : ""} ${className || ""}`}
+			className={`${styles.container} ${isOpen ? styles.open : ""} ${openUpward ? styles.openUpward : ""} ${className || ""}`}
+			style={style}
 			onKeyDown={handleKeyDown}
 			tabIndex={0}
 		>
@@ -176,3 +211,4 @@ export function Select({ value, onChange, options, placeholder, className }: Sel
 		</div>
 	);
 }
+

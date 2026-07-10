@@ -1,7 +1,7 @@
-"""WorldState — структурированный снимок состояния системы для директора.
+"""WorldState — структурированный снимок состояния системы для оператора.
 
 Собирает данные из RunRegistry, ArtifactStore и MessageBus в единый объект,
-который директор получает в каждом шаге (через get_active_runs / supervisor_observations).
+который оператор получает в каждом шаге (через get_active_runs / supervisor_observations).
 """
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ class WorldState:
         }
 
     def summarize(self) -> str:
-        """Краткое текстовое описание состояния для промпта директора."""
+        """Краткое текстовое описание состояния для промпта оператора."""
         snap = self.snapshot()
         lines = [
             f"Активных run: {snap['active_runs']}, завершённых: {snap['finished_runs']}.",

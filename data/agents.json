@@ -1,0 +1,443 @@
+{
+  "operator": {
+    "display_name": "Оператор",
+    "description": "Управляет выполнением задачи на ПК, наблюдает экран, выполняет доступные действия, координирует саб-агентов и проверяет итог.",
+    "capabilities": [
+      "операторское управление ПК",
+      "визуальное наблюдение",
+      "декомпозиция задач",
+      "управление run",
+      "контроль качества",
+      "сводный ответ"
+    ],
+    "when_to_use": "Всегда является входной точкой для задачи пользователя и главным оператором выполнения.",
+    "limits": [
+      "использует только инструменты, доступные в текущем payload",
+      "для необратимых действий требует явную задачу или подтверждение"
+    ],
+    "prompt_path": "prompts/system_prompt.txt",
+    "tools": [
+      {
+        "name": "delegate_task",
+        "enabled": true,
+        "required": false
+      },
+      {
+        "name": "delegate_parallel",
+        "enabled": true,
+        "required": false
+      },
+      {
+        "name": "finish_task",
+        "enabled": true,
+        "required": true
+      },
+      {
+        "name": "get_agent_memory",
+        "enabled": true,
+        "required": false
+      },
+      {
+        "name": "view_runs",
+        "enabled": true,
+        "required": false
+      },
+      {
+        "name": "cancel_run",
+        "enabled": true,
+        "required": false
+      },
+      {
+        "name": "pause_run",
+        "enabled": true,
+        "required": false
+      },
+      {
+        "name": "resume_run",
+        "enabled": true,
+        "required": false
+      },
+      {
+        "name": "message_run",
+        "enabled": true,
+        "required": false
+      },
+      {
+        "name": "replace_task_run",
+        "enabled": true,
+        "required": false
+      },
+      {
+        "name": "reprioritize_run",
+        "enabled": true,
+        "required": false
+      },
+      {
+        "name": "get_world_state",
+        "enabled": true,
+        "required": false
+      },
+      {
+        "name": "wait_for_event",
+        "enabled": true,
+        "required": false
+      },
+      {
+        "name": "take_screenshot",
+        "enabled": true,
+        "required": false
+      },
+      {
+        "name": "read_image",
+        "enabled": true,
+        "required": false
+      },
+      {
+        "name": "system_mouse_move",
+        "enabled": true,
+        "required": false
+      },
+      {
+        "name": "focus_ui_element",
+        "enabled": true,
+        "required": false
+      },
+      {
+        "name": "click_ui_element",
+        "enabled": true,
+        "required": false
+      },
+      {
+        "name": "list_ui_elements",
+        "enabled": true,
+        "required": false
+      },
+      {
+        "name": "system_mouse_nudge",
+        "enabled": true,
+        "required": false
+      },
+      {
+        "name": "system_mouse_click",
+        "enabled": true,
+        "required": false
+      },
+      {
+        "name": "system_type_text",
+        "enabled": true,
+        "required": false
+      },
+      {
+        "name": "system_key_press",
+        "enabled": true,
+        "required": false
+      },
+      {
+        "name": "get_screen_info",
+        "enabled": true,
+        "required": false
+      },
+      {
+        "name": "system_mouse_double_click",
+        "enabled": true,
+        "required": false
+      },
+      {
+        "name": "system_mouse_scroll",
+        "enabled": true,
+        "required": false
+      },
+      {
+        "name": "system_mouse_drag",
+        "enabled": true,
+        "required": false
+      }
+    ]
+  },
+  "file": {
+    "display_name": "Файловый агент",
+    "description": "Работает с проектами, кодом, текстовыми файлами и артефактами. Должен читать перед правкой и проверять результат после нее.",
+    "capabilities": [
+      "чтение файлов",
+      "поиск по проекту",
+      "точечные правки",
+      "создание файлов",
+      "управление структурой"
+    ],
+    "when_to_use": "Когда задача касается кода, конфигов, документации, структуры папок или локальных текстовых данных.",
+    "limits": [
+      "не запускает системные команды",
+      "не выходит за разрешенные рабочие корни",
+      "удаляет только по явному поручению"
+    ],
+    "prompt_path": "prompts/agents/file.txt",
+    "tools": [
+      {
+        "name": "read_text_file",
+        "enabled": true
+      },
+      {
+        "name": "read_multiple_files",
+        "enabled": true
+      },
+      {
+        "name": "list_directory",
+        "enabled": true
+      },
+      {
+        "name": "find_files",
+        "enabled": true
+      },
+      {
+        "name": "search_in_file",
+        "enabled": true
+      },
+      {
+        "name": "search_in_directory",
+        "enabled": true
+      },
+      {
+        "name": "file_exists",
+        "enabled": true
+      },
+      {
+        "name": "get_file_info",
+        "enabled": true
+      },
+      {
+        "name": "create_file",
+        "enabled": true
+      },
+      {
+        "name": "patch_file",
+        "enabled": true
+      },
+      {
+        "name": "insert_lines",
+        "enabled": true
+      },
+      {
+        "name": "delete_lines",
+        "enabled": true
+      },
+      {
+        "name": "create_directory",
+        "enabled": true
+      },
+      {
+        "name": "rename",
+        "enabled": true
+      },
+      {
+        "name": "copy_file",
+        "enabled": true
+      },
+      {
+        "name": "move_file",
+        "enabled": true
+      },
+      {
+        "name": "delete_file",
+        "enabled": true
+      }
+    ],
+    "enabled": true
+  },
+  "system": {
+    "display_name": "Системный агент",
+    "description": "Работает с Windows и окружением пользователя: PowerShell, процессы, приложения, буфер обмена, скриншоты и диагностика.",
+    "capabilities": [
+      "PowerShell",
+      "процессы",
+      "приложения",
+      "системная диагностика",
+      "скриншоты",
+      "буфер обмена"
+    ],
+    "when_to_use": "Когда нужно проверить или изменить состояние компьютера, запустить приложение, проверить dev-сервер или выполнить команду.",
+    "limits": [
+      "рискованные команды требуют явного поручения",
+      "не должен менять файлы проекта вместо файлового агента",
+      "не должен скрывать вывод ошибок"
+    ],
+    "prompt_path": "prompts/agents/system.txt",
+    "tools": [
+      {
+        "name": "run_powershell",
+        "enabled": true
+      },
+      {
+        "name": "get_system_info",
+        "enabled": true
+      },
+      {
+        "name": "get_installed_programs",
+        "enabled": true
+      },
+      {
+        "name": "disk_free_space",
+        "enabled": true
+      },
+      {
+        "name": "list_network_adapters",
+        "enabled": true
+      },
+      {
+        "name": "list_temp_files",
+        "enabled": true
+      },
+      {
+        "name": "list_processes",
+        "enabled": true
+      },
+      {
+        "name": "launch_app",
+        "enabled": true
+      },
+      {
+        "name": "close_app",
+        "enabled": true
+      },
+      {
+        "name": "open_url",
+        "enabled": true
+      },
+      {
+        "name": "get_clipboard",
+        "enabled": true
+      },
+      {
+        "name": "set_clipboard",
+        "enabled": true
+      },
+      {
+        "name": "show_notification",
+        "enabled": true
+      },
+      {
+        "name": "take_screenshot",
+        "enabled": true
+      },
+      {
+        "name": "system_type_text",
+        "enabled": true
+      },
+      {
+        "name": "system_key_press",
+        "enabled": true
+      },
+      {
+        "name": "get_screen_info",
+        "enabled": true,
+        "required": false
+      },
+      {
+        "name": "system_mouse_double_click",
+        "enabled": true,
+        "required": false
+      },
+      {
+        "name": "system_mouse_scroll",
+        "enabled": true,
+        "required": false
+      },
+      {
+        "name": "system_mouse_drag",
+        "enabled": true,
+        "required": false
+      }
+    ],
+    "enabled": true
+  },
+  "web": {
+    "display_name": "Веб-агент",
+    "description": "Ищет и проверяет информацию в интернете, читает страницы и возвращает оператору источники.",
+    "capabilities": [
+      "поиск в интернете",
+      "чтение страниц",
+      "проверка актуальности",
+      "открытие URL"
+    ],
+    "when_to_use": "Когда нужен внешний источник, документация, актуальная информация или проверка фактов.",
+    "limits": [
+      "не должен придумывать источники",
+      "не выполняет браузерные действия внутри приложений",
+      "для спорных фактов сверяет несколько источников"
+    ],
+    "prompt_path": "prompts/agents/web.txt",
+    "tools": [
+      {
+        "name": "fetch_url",
+        "enabled": true
+      },
+      {
+        "name": "search_web",
+        "enabled": true
+      },
+      {
+        "name": "open_url",
+        "enabled": true
+      }
+    ],
+    "enabled": true
+  },
+  "telegram": {
+    "display_name": "Telegram-агент",
+    "description": "Работает с Telegram от имени пользователя: авторизация, чаты, контакты, сообщения и отправка по явному поручению.",
+    "capabilities": [
+      "авторизация Telegram",
+      "чаты",
+      "контакты",
+      "чтение сообщений",
+      "фильтр по отправителю",
+      "просмотр фото из чата",
+      "отправка сообщений"
+    ],
+    "when_to_use": "Когда задача явно касается Telegram или переписок пользователя.",
+    "limits": [
+      "не отправляет сообщения без явного получателя и текста",
+      "не раскрывает приватные данные сверх задачи",
+      "для кодов авторизации возвращает blocked"
+    ],
+    "prompt_path": "prompts/agents/telegram.txt",
+    "tools": [
+      {
+        "name": "configure_telegram",
+        "enabled": true
+      },
+      {
+        "name": "telegram_auth_start",
+        "enabled": true
+      },
+      {
+        "name": "telegram_auth_code",
+        "enabled": true
+      },
+      {
+        "name": "send_telegram_message",
+        "enabled": true
+      },
+      {
+        "name": "get_chats",
+        "enabled": true
+      },
+      {
+        "name": "get_messages",
+        "enabled": true
+      },
+      {
+        "name": "read_chat_image",
+        "enabled": true
+      },
+      {
+        "name": "get_contacts",
+        "enabled": true
+      },
+      {
+        "name": "get_own_telegram_profile",
+        "enabled": true
+      }
+    ],
+    "enabled": true
+  }
+}

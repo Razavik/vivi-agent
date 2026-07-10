@@ -18,7 +18,7 @@ class AgentRegistry:
         return self._agents.get(name)
 
     def describe_all(self) -> list[dict[str, str]]:
-        """Возвращает список доступных агентов с описаниями для промпта директора."""
+        """Возвращает список доступных агентов с описаниями для промпта оператора."""
         return [agent.describe() for agent in self._agents.values()]
 
     @property

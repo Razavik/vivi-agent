@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import inspect
 import json
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 from telethon import TelegramClient
@@ -10,6 +12,58 @@ from telethon.errors import SessionPasswordNeededError, PhoneNumberInvalidError
 
 from src.infra.config import Settings, get_settings
 from src.infra.errors import ToolExecutionError
+
+
+PROFILE_FILE = Path("data/telegram_profile.json")
+# Скачанные фото редко превышают пару МБ (Telegram сжимает при отправке как "фото");
+# документы-картинки могут быть крупнее — этот потолок защищает от раздувания base64
+# в контексте LLM одним огромным файлом.
+_MAX_IMAGE_BYTES = 8_000_000
+
+
+def load_telegram_profile() -> dict[str, Any] | None:
+    """Читает закреплённый профиль пользователя в Telegram (username, имя, id).
+
+    Отдельная функция уровня модуля (а не метод TelegramTools), чтобы её можно было
+    вызывать без API-креденшелов — например, при построении системного промпта
+    саб-агента в app_factory, где создавать полноценный TelegramTools избыточно.
+    """
+    if not PROFILE_FILE.exists():
+        return None
+    try:
+        data = json.loads(PROFILE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _save_telegram_profile(profile: dict[str, Any]) -> None:
+    PROFILE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PROFILE_FILE.write_text(json.dumps(profile, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _message_media_type(msg: Any) -> str | None:
+    """Классифицирует медиа сообщения: photo/document-image/video/audio/document/None.
+
+    Чистая функция без обращений к сети — принимает уже полученный объект message.
+    """
+    if getattr(msg, "photo", None) is not None:
+        return "photo"
+    document = getattr(msg, "document", None)
+    if document is not None:
+        mime_type = str(getattr(document, "mime_type", "") or "")
+        if mime_type.startswith("image/"):
+            return "photo"
+        if mime_type.startswith("video/"):
+            return "video"
+        if mime_type.startswith("audio/"):
+            return "audio"
+        return "document"
+    if getattr(msg, "video", None) is not None:
+        return "video"
+    if getattr(msg, "voice", None) is not None or getattr(msg, "audio", None) is not None:
+        return "audio"
+    return None
 
 
 class TelegramTools:
@@ -46,6 +100,28 @@ class TelegramTools:
         if not self.is_configured:
             raise ToolExecutionError("Сначала настройте API данные через configure_telegram")
         return TelegramClient(self.session_path, int(self.api_id), self.api_hash, loop=loop)
+
+    def _resolve_entity(self, client: TelegramClient, loop: asyncio.AbstractEventLoop, chat_id: str) -> Any:
+        """Резолвит chat_id (числовой id или @username) в Telethon entity.
+        Общий хелпер для get_messages/send_message/read_chat_image — раньше эта
+        логика была продублирована в каждом методе по отдельности."""
+        normalized = chat_id.removeprefix("@")
+        if normalized.isdigit():
+            dialogs = self._run_telethon(loop, client.get_dialogs(limit=200))
+            target_id = int(normalized)
+            for dialog in dialogs:
+                dialog_entity = getattr(dialog, "entity", None)
+                if dialog_entity and getattr(dialog_entity, "id", None) == target_id:
+                    return dialog_entity
+            return None
+        return self._run_telethon(loop, client.get_entity(chat_id))
+
+    @staticmethod
+    def _resolve_peer_arg(value: str) -> str | int:
+        """Готовит значение from_user/recipient для передачи в Telethon: числовые
+        id — как int, остальное (username) — как строку без ведущего @."""
+        normalized = value.removeprefix("@")
+        return int(normalized) if normalized.isdigit() else normalized
 
     def _run_telethon(self, loop: asyncio.AbstractEventLoop, value: Any) -> Any:
         """Выполняет awaitable через loop или возвращает готовый синхронный результат."""
@@ -152,9 +228,11 @@ class TelegramTools:
             self._run_telethon(loop, client.connect())
             if self._run_telethon(loop, client.is_user_authorized()):
                 self._clear_auth_state()
+                profile = self._sync_profile(client, loop)
                 return {
                     "success": True,
                     "message": "Авторизация уже активна. Можно отправлять сообщения через send_telegram_message.",
+                    "profile": profile,
                 }
 
             try:
@@ -170,14 +248,50 @@ class TelegramTools:
                 self._run_telethon(loop, client.sign_in(password=password))
 
             self._clear_auth_state()
+            profile = self._sync_profile(client, loop)
             return {
                 "success": True,
                 "message": "Авторизация успешна! Теперь можно отправлять сообщения через send_telegram_message.",
+                "profile": profile,
             }
         except PhoneNumberInvalidError:
             raise ToolExecutionError("Некорректный номер телефона")
         except Exception as e:
             raise ToolExecutionError(f"Ошибка подтверждения кода: {str(e)}")
+        finally:
+            if client.is_connected():
+                self._run_telethon(loop, client.disconnect())
+            loop.close()
+
+    def _sync_profile(self, client: TelegramClient, loop: asyncio.AbstractEventLoop) -> dict[str, Any]:
+        """Читает свой профиль (get_me) и сохраняет в data/telegram_profile.json,
+        чтобы он был "закреплён" для агента через prompt_vars — без похода в сеть
+        на каждый запуск саб-агента."""
+        me = self._run_telethon(loop, client.get_me())
+        profile = {
+            "id": me.id,
+            "username": getattr(me, "username", None),
+            "first_name": getattr(me, "first_name", "") or "",
+            "last_name": getattr(me, "last_name", "") or "",
+            "phone": getattr(me, "phone", None),
+        }
+        _save_telegram_profile(profile)
+        return profile
+
+    def get_own_profile(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Инструмент get_own_telegram_profile: принудительно обновляет и
+        возвращает закреплённый профиль пользователя (self-healing на случай,
+        если файл потерялся или пользователь сменил аккаунт)."""
+        loop = self._create_loop()
+        client = self._create_client(loop)
+        try:
+            self._run_telethon(loop, client.connect())
+            if not self._run_telethon(loop, client.is_user_authorized()):
+                raise ToolExecutionError("Сначала завершите авторизацию через telegram_auth_start и telegram_auth_code")
+            profile = self._sync_profile(client, loop)
+            return {"success": True, **profile}
+        except Exception as e:
+            raise ToolExecutionError(f"Ошибка получения профиля: {str(e)}")
         finally:
             if client.is_connected():
                 self._run_telethon(loop, client.disconnect())
@@ -248,10 +362,11 @@ class TelegramTools:
             loop.close()
 
     def get_messages(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Получает сообщения из чата с пагинацией."""
+        """Получает сообщения из чата с пагинацией и опциональной фильтрацией по отправителю."""
         chat_id = str(args.get("chat_id", ""))
         limit = int(args.get("limit", 20))
         offset = int(args.get("offset", 0))
+        from_user_raw = str(args.get("from_user", "")).strip()
 
         if not chat_id:
             raise ToolExecutionError("Не указан chat_id")
@@ -268,25 +383,17 @@ class TelegramTools:
             if not self._run_telethon(loop, client.is_user_authorized()):
                 raise ToolExecutionError("Сначала завершите авторизацию через telegram_auth_start и telegram_auth_code")
 
-            entity = None
-            normalized_chat_id = chat_id.removeprefix("@")
-
-            if normalized_chat_id.isdigit():
-                dialogs = self._run_telethon(loop, client.get_dialogs(limit=200))
-                target_id = int(normalized_chat_id)
-                for dialog in dialogs:
-                    dialog_entity = getattr(dialog, 'entity', None)
-                    if dialog_entity and getattr(dialog_entity, 'id', None) == target_id:
-                        entity = dialog_entity
-                        break
-            else:
-                entity = self._run_telethon(loop, client.get_entity(chat_id))
-
+            entity = self._resolve_entity(client, loop, chat_id)
             if entity is None:
                 raise ToolExecutionError(f"Чат не найден: {chat_id}")
 
-            # Получаем сообщения
-            messages = self._run_telethon(loop, client.get_messages(entity, limit=limit + offset))
+            # from_user — нативный фильтр Telethon: сервер Telegram сам отдаёт только
+            # сообщения нужного отправителя внутри группового чата, без постобработки.
+            get_messages_kwargs: dict[str, Any] = {"limit": limit + offset}
+            if from_user_raw:
+                get_messages_kwargs["from_user"] = self._resolve_peer_arg(from_user_raw)
+
+            messages = self._run_telethon(loop, client.get_messages(entity, **get_messages_kwargs))
 
             # Применяем offset и собираем данные
             messages_data = []
@@ -300,7 +407,8 @@ class TelegramTools:
                         "id": msg.id,
                         "text": msg.text or "",
                         "date": msg.date.isoformat() if msg.date else None,
-                        "from_id": sender_id
+                        "from_id": sender_id,
+                        "media_type": _message_media_type(msg),
                     }
                     if hasattr(msg, 'sender') and msg.sender:
                         if hasattr(msg.sender, 'username'):
@@ -315,10 +423,80 @@ class TelegramTools:
                 "total": len(messages_data),
                 "limit": limit,
                 "offset": offset,
-                "chat_id": chat_id
+                "chat_id": chat_id,
+                "from_user": from_user_raw or None,
             }
         except Exception as e:
             raise ToolExecutionError(f"Ошибка получения сообщений: {str(e)}")
+        finally:
+            if client.is_connected():
+                self._run_telethon(loop, client.disconnect())
+            loop.close()
+
+    def read_chat_image(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Скачивает фото/изображение из конкретного сообщения чата и возвращает
+        его в формате, который SubAgent распознаёт как изображение для LLM
+        (_type="image") — см. get_messages(media_type="photo") чтобы найти
+        message_id сообщений с фото."""
+        chat_id = str(args.get("chat_id", ""))
+        message_id_raw = args.get("message_id")
+
+        if not chat_id:
+            raise ToolExecutionError("Не указан chat_id")
+        try:
+            message_id = int(message_id_raw)
+        except (TypeError, ValueError):
+            raise ToolExecutionError("message_id должен быть числом (см. поле id из get_messages)")
+
+        loop = self._create_loop()
+        client = self._create_client(loop)
+
+        try:
+            self._run_telethon(loop, client.connect())
+            if not self._run_telethon(loop, client.is_user_authorized()):
+                raise ToolExecutionError("Сначала завершите авторизацию через telegram_auth_start и telegram_auth_code")
+
+            entity = self._resolve_entity(client, loop, chat_id)
+            if entity is None:
+                raise ToolExecutionError(f"Чат не найден: {chat_id}")
+
+            msg = self._run_telethon(loop, client.get_messages(entity, ids=message_id))
+            if msg is None:
+                raise ToolExecutionError(f"Сообщение не найдено: {message_id}")
+
+            media_type = _message_media_type(msg)
+            if media_type not in ("photo",):
+                raise ToolExecutionError(
+                    f"Сообщение {message_id} не содержит изображение (media_type={media_type or 'нет медиа'})"
+                )
+
+            buffer = BytesIO()
+            self._run_telethon(loop, client.download_media(msg, file=buffer))
+            image_bytes = buffer.getvalue()
+            if not image_bytes:
+                raise ToolExecutionError("Не удалось скачать изображение: пустой файл")
+            if len(image_bytes) > _MAX_IMAGE_BYTES:
+                raise ToolExecutionError(
+                    f"Изображение слишком большое ({len(image_bytes)} байт, лимит {_MAX_IMAGE_BYTES}): "
+                    "не могу передать его в контекст модели"
+                )
+
+            document = getattr(msg, "document", None)
+            mime_type = str(getattr(document, "mime_type", "") or "image/jpeg") if document else "image/jpeg"
+
+            return {
+                "image": base64.b64encode(image_bytes).decode("ascii"),
+                "format": mime_type,
+                "_type": "image",
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "caption": msg.text or "",
+                "size": len(image_bytes),
+            }
+        except ToolExecutionError:
+            raise
+        except Exception as e:
+            raise ToolExecutionError(f"Ошибка скачивания изображения: {str(e)}")
         finally:
             if client.is_connected():
                 self._run_telethon(loop, client.disconnect())
@@ -393,20 +571,7 @@ class TelegramTools:
             if not self._run_telethon(loop, client.is_user_authorized()):
                 raise ToolExecutionError("Сначала завершите авторизацию через telegram_auth_start и telegram_auth_code")
 
-            entity = None
-            normalized_recipient = recipient.removeprefix("@")
-
-            if normalized_recipient.isdigit():
-                dialogs = self._run_telethon(loop, client.get_dialogs(limit=200))
-                target_id = int(normalized_recipient)
-                for dialog in dialogs:
-                    dialog_entity = getattr(dialog, 'entity', None)
-                    if dialog_entity and getattr(dialog_entity, 'id', None) == target_id:
-                        entity = dialog_entity
-                        break
-            else:
-                entity = self._run_telethon(loop, client.get_entity(recipient))
-
+            entity = self._resolve_entity(client, loop, recipient)
             if entity is None:
                 raise ToolExecutionError(f"Получатель не найден: {recipient}")
 

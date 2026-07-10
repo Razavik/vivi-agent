@@ -289,7 +289,7 @@
 	color: var(--err);
 }
 .badge_finished {
-	background: rgba(46, 204, 113, 0.08);
+	background: rgba(139, 92, 246, 0.1);
 	color: var(--ok);
 }
 .badge_cancelled {
@@ -396,3 +396,5 @@
 .errText {
 	color: var(--err);
 }
+
+

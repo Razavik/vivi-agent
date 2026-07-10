@@ -4,12 +4,14 @@ import json
 import re
 import time
 from dataclasses import dataclass
+from threading import Lock
 from typing import Any, Callable
 
 import requests
+from requests import Response
 
 from src.agent.schemas import ActionStep
-from src.infra.errors import LLMResponseError, ValidationError
+from src.infra.errors import AgentError, LLMResponseError, ValidationError
 
 
 @dataclass
@@ -38,9 +40,34 @@ class OllamaClient:
         self.num_ctx = num_ctx
         self.keep_alive = keep_alive
         self.think = think
+        self.network_max_retries = 3
+        self.network_retry_delay_seconds = 1.5
         self._headers: dict[str, str] = {"Content-Type": "application/json"}
+        self._active_response: Response | None = None
+        self._active_session: requests.Session | None = None
+        self._active_response_lock = Lock()
+        self._cancel_requested = False
         if api_key:
             self._headers["Authorization"] = f"Bearer {api_key}"
+
+    def cancel_active_request(self) -> None:
+        self._cancel_requested = True
+        with self._active_response_lock:
+            response = self._active_response
+        if response is not None:
+            try:
+                response.close()
+            except Exception:
+                pass
+        session = self._active_session
+        if session is not None:
+            try:
+                session.close()
+            except Exception:
+                pass
+
+    def reset_cancel_request(self) -> None:
+        self._cancel_requested = False
 
     def _action_step_format_schema(self) -> dict[str, Any]:
         return {
@@ -172,12 +199,7 @@ class OllamaClient:
     ) -> LLMResponse:
         """Синхронный не-потоковый запрос. Возвращает LLMResponse."""
         body = self._build_request_body(messages, stream=False, response_format=response_format)
-        response = requests.post(
-            f"{self.base_url}/api/chat",
-            json=body,
-            headers=self._headers,
-            timeout=self.timeout_seconds,
-        )
+        response = self._post_with_retry(body=body, stream=False)
         response.raise_for_status()
         response.encoding = "utf-8"
         return self._parse_response(response.json())
@@ -192,15 +214,11 @@ class OllamaClient:
         body = self._build_request_body(
             messages, stream=True, response_format=self._action_step_format_schema()
         )
-        response = requests.post(
-            f"{self.base_url}/api/chat",
-            json=body,
-            headers=self._headers,
-            timeout=self.timeout_seconds,
-            stream=True,
-        )
+        response = self._post_with_retry(body=body, stream=True)
         response.raise_for_status()
         response.encoding = "utf-8"
+        with self._active_response_lock:
+            self._active_response = response
 
         content_parts: list[str] = []
         thinking_parts: list[str] = []
@@ -208,36 +226,57 @@ class OllamaClient:
         prompt_eval_count = 0
         done_reason = "stop"
 
-        for raw_line in response.iter_lines(decode_unicode=False):
-            if not raw_line:
-                continue
-            try:
-                line = raw_line.decode("utf-8")
-            except UnicodeDecodeError as exc:
-                raise LLMResponseError("Модель вернула поток не в UTF-8") from exc
-            if not line:
-                continue
-            try:
-                payload = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise LLMResponseError(f"Модель вернула невалидный поток JSON: {line}") from exc
+        try:
+            for raw_line in response.iter_lines(decode_unicode=False):
+                if self._cancel_requested:
+                    raise AgentError("Запрос к Ollama отменён")
+                if not raw_line:
+                    continue
+                try:
+                    line = raw_line.decode("utf-8")
+                except UnicodeDecodeError as exc:
+                    raise LLMResponseError("Модель вернула поток не в UTF-8") from exc
+                if not line:
+                    continue
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise LLMResponseError(f"Модель вернула невалидный поток JSON: {line}") from exc
 
-            message = payload.get("message")
-            if isinstance(message, dict):
-                chunk = message.get("content")
-                if isinstance(chunk, str) and chunk:
-                    content_parts.append(chunk)
-                    on_content("".join(content_parts))
-                thinking_chunk = message.get("thinking")
-                if isinstance(thinking_chunk, str) and thinking_chunk:
-                    thinking_parts.append(thinking_chunk)
-                    if on_thinking:
-                        on_thinking("".join(thinking_parts))
+                message = payload.get("message")
+                if isinstance(message, dict):
+                    chunk = message.get("content")
+                    if isinstance(chunk, str) and chunk:
+                        content_parts.append(chunk)
+                        on_content("".join(content_parts))
+                    thinking_chunk = message.get("thinking")
+                    if isinstance(thinking_chunk, str) and thinking_chunk:
+                        thinking_parts.append(thinking_chunk)
+                        if on_thinking:
+                            on_thinking("".join(thinking_parts))
 
-            if payload.get("done"):
-                eval_count = payload.get("eval_count", 0)
-                prompt_eval_count = payload.get("prompt_eval_count", 0)
-                done_reason = payload.get("done_reason", "stop")
+                if payload.get("done"):
+                    eval_count = payload.get("eval_count", 0)
+                    prompt_eval_count = payload.get("prompt_eval_count", 0)
+                    done_reason = payload.get("done_reason", "stop")
+        except (requests.exceptions.RequestException, OSError) as exc:
+            if self._cancel_requested:
+                raise AgentError("Запрос к Ollama отменён") from exc
+            raise
+        except Exception as exc:
+            if self._cancel_requested:
+                raise AgentError("Запрос к Ollama отменён") from exc
+            raise
+        finally:
+            with self._active_response_lock:
+                self._active_response = None
+            session = self._active_session
+            self._active_session = None
+            if session is not None:
+                try:
+                    session.close()
+                except Exception:
+                    pass
 
         return LLMResponse(
             content="".join(content_parts),
@@ -360,3 +399,56 @@ class OllamaClient:
             else:
                 result.append(ch)
         return "".join(result)
+
+    def _post_with_retry(self, body: dict[str, Any], stream: bool) -> Response:
+        last_exc: Exception | None = None
+        for attempt in range(1, self.network_max_retries + 1):
+            if self._cancel_requested:
+                raise AgentError("Запрос к Ollama отменён")
+            session = requests.Session()
+            self._active_session = session
+            try:
+                response = session.post(
+                    f"{self.base_url}/api/chat",
+                    json=body,
+                    headers=self._headers,
+                    timeout=self.timeout_seconds,
+                    stream=stream,
+                )
+                if self._cancel_requested:
+                    response.close()
+                    raise AgentError("Запрос к Ollama отменён")
+                if not stream:
+                    self._active_session = None
+                    session.close()
+                return response
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+                last_exc = exc
+                self._active_session = None
+                try:
+                    session.close()
+                except Exception:
+                    pass
+                if self._cancel_requested:
+                    raise AgentError("Запрос к Ollama отменён") from exc
+                if attempt < self.network_max_retries:
+                    time.sleep(self.network_retry_delay_seconds * attempt)
+                    continue
+                raise LLMResponseError(
+                    f"Ошибка сети при обращении к Ollama после {self.network_max_retries} попыток: {exc}"
+                ) from exc
+            except AgentError:
+                self._active_session = None
+                try:
+                    session.close()
+                except Exception:
+                    pass
+                raise
+            except Exception:
+                self._active_session = None
+                try:
+                    session.close()
+                except Exception:
+                    pass
+                raise
+        raise LLMResponseError(f"Не удалось выполнить запрос к Ollama: {last_exc}")

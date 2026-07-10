@@ -6,7 +6,10 @@
 	border-bottom: 1px solid var(--border);
 	flex-shrink: 0;
 	padding: 0 20px;
-	background: var(--bg-main);
+	background:
+		linear-gradient(90deg, rgba(192, 132, 252, 0.05), transparent 45%),
+		rgba(13, 11, 19, 0.92);
+	backdrop-filter: blur(16px);
 }
 
 .titleSection {
@@ -27,16 +30,6 @@
 	font-weight: 600;
 	color: var(--text-sub);
 	letter-spacing: 0.01em;
-}
-
-.tokenCounter {
-	font-size: 10px;
-	color: var(--text-muted);
-	padding: 1px 6px;
-	border-radius: var(--radius-sm);
-	border: 1px solid var(--border);
-	font-family: var(--font-mono);
-	letter-spacing: 0.02em;
 }
 
 .iconBtn {
@@ -67,3 +60,4 @@
 	opacity: 0.25;
 	cursor: not-allowed;
 }
+

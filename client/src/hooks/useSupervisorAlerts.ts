@@ -1,19 +1,27 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import type { SupervisorAlert } from "../types";
+import type { SupervisorAlert, SupervisorAlertPayload } from "../types";
+import { getWebSocketUrl } from "../utils/wsConfig";
+import { readJson } from "../utils/http";
 
-const WS_URL = "ws://127.0.0.1:8001";
 const MAX_ALERTS = 20;
 
-function normalizeAlert(raw: any): SupervisorAlert | null {
-	if (!raw) return null;
-	const direct = raw?.payload?.type ? raw : null;
-	const wrapped = raw?.event === "supervisor_alert" && raw?.payload ? raw.payload : null;
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function normalizeAlert(raw: unknown): SupervisorAlert | null {
+	if (!isRecord(raw)) return null;
+	const rawPayload = isRecord(raw.payload) ? raw.payload : null;
+	const direct = isRecord(rawPayload) && typeof rawPayload.type === "string" ? raw : null;
+	const wrapped = raw.event === "supervisor_alert" && rawPayload ? rawPayload : null;
 	const alert = direct ?? wrapped;
-	if (!alert?.payload?.type) return null;
+	if (!isRecord(alert) || !isRecord(alert.payload) || typeof alert.payload.type !== "string") {
+		return null;
+	}
 	return {
 		event: "supervisor_alert",
-		payload: alert.payload,
+		payload: alert.payload as unknown as SupervisorAlertPayload,
 		timestamp: Number(alert.timestamp) || Date.now() / 1000,
 	};
 }
@@ -50,7 +58,7 @@ export function useSupervisorAlerts() {
 		let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
 		const connect = () => {
-			ws = new WebSocket(WS_URL);
+			ws = new WebSocket(getWebSocketUrl());
 			wsRef.current = ws;
 
 			ws.onopen = () => {
@@ -79,7 +87,7 @@ export function useSupervisorAlerts() {
 		connect();
 		const pollTimer = setInterval(() => {
 			fetch("/api/supervisor/alerts")
-				.then((res) => (res.ok ? res.json() : null))
+				.then((res) => readJson<{ alerts?: unknown[] } | null>(res, null))
 				.then((data) => {
 					if (!Array.isArray(data?.alerts)) return;
 					for (const raw of data.alerts) {

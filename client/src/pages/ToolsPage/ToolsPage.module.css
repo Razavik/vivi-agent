@@ -261,6 +261,57 @@
 	margin-left: auto;
 }
 
+.statusFilters {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 4px;
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	background:
+		linear-gradient(135deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02)),
+		rgba(0, 0, 0, 0.12);
+}
+
+.statusFilter {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 10px;
+	border: 0;
+	border-radius: 9px;
+	background: transparent;
+	color: var(--text-muted);
+	font-size: 12px;
+	font-weight: 600;
+	cursor: pointer;
+	transition:
+		background 0.15s,
+		color 0.15s,
+		box-shadow 0.15s;
+}
+
+.statusFilter:hover {
+	color: var(--text-main);
+	background: rgba(255, 255, 255, 0.06);
+}
+
+.statusFilter span {
+	min-width: 18px;
+	padding: 1px 6px;
+	border-radius: 999px;
+	background: rgba(255, 255, 255, 0.08);
+	color: inherit;
+	font-size: 11px;
+	text-align: center;
+}
+
+.statusFilterActive {
+	color: #ffffff;
+	background: rgba(126, 176, 255, 0.18);
+	box-shadow: inset 0 0 0 1px rgba(126, 176, 255, 0.28);
+}
+
 .actionBtn {
 	padding: 7px 14px;
 	font-size: 12px;
@@ -382,7 +433,7 @@
 }
 
 .toolRequired {
-	border-color: rgba(16, 163, 127, 0.2);
+	border-color: rgba(192, 132, 252, 0.24);
 }
 
 .savingIndicator {
@@ -428,7 +479,7 @@
 .addAgentBtn:hover {
 	border-color: var(--accent);
 	color: var(--accent);
-	background: rgba(16, 163, 127, 0.08);
+	background: rgba(192, 132, 252, 0.12);
 }
 
 /* Модальное окно */
@@ -492,3 +543,5 @@
 	gap: 8px;
 	margin-top: 4px;
 }
+
+

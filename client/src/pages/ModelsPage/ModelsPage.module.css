@@ -1,0 +1,166 @@
+.page {
+	padding: 28px;
+	display: flex;
+	flex-direction: column;
+	gap: 20px;
+	flex: 1;
+	min-width: 0;
+	min-height: 0;
+	overflow-y: auto;
+	scrollbar-gutter: stable;
+}
+
+.page::-webkit-scrollbar {
+	width: 6px;
+}
+
+.page::-webkit-scrollbar-thumb {
+	background: var(--border);
+	border-radius: 3px;
+}
+
+.header {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.title {
+	margin: 0;
+	font-size: 20px;
+	font-weight: 700;
+	color: var(--text-main);
+}
+
+.subtitle {
+	margin: 0;
+	font-size: 13px;
+	line-height: 1.5;
+	color: var(--text-muted);
+	max-width: 720px;
+}
+
+.grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+	gap: 16px;
+}
+
+.section {
+	background: rgba(255, 255, 255, 0.03);
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	overflow: hidden;
+}
+
+.sectionHeader {
+	padding: 14px 18px;
+	border-bottom: 1px solid var(--border);
+	font-size: 11px;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	color: var(--text-muted);
+}
+
+.addRow {
+	padding: 18px;
+	display: flex;
+	gap: 12px;
+}
+
+.input {
+	flex: 1;
+	min-width: 0;
+	background: rgba(0, 0, 0, 0.2);
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	padding: 10px 12px;
+	font-size: 13px;
+	color: var(--text-main);
+	outline: none;
+}
+
+.input:focus {
+	border-color: var(--accent);
+}
+
+.list {
+	display: flex;
+	flex-direction: column;
+}
+
+.item {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	justify-content: space-between;
+	padding: 14px 18px;
+	border-top: 1px solid var(--border);
+}
+
+.item:first-child {
+	border-top: none;
+}
+
+.itemMain {
+	min-width: 0;
+}
+
+.itemTitle {
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--text-main);
+	word-break: break-word;
+}
+
+.itemMeta {
+	margin-top: 4px;
+	font-size: 12px;
+	color: var(--text-muted);
+}
+
+.empty {
+	padding: 18px;
+	font-size: 13px;
+	color: var(--text-muted);
+}
+
+.primaryButton,
+.ghostButton {
+	flex-shrink: 0;
+	padding: 9px 14px;
+	font-size: 12px;
+	border-radius: 8px;
+	cursor: pointer;
+	transition:
+		background 0.15s,
+		border-color 0.15s,
+		opacity 0.15s;
+}
+
+.primaryButton {
+	border: 1px solid var(--accent);
+	background: rgba(192, 132, 252, 0.16);
+	color: var(--text-main);
+}
+
+.primaryButton:hover:not(:disabled) {
+	background: rgba(192, 132, 252, 0.24);
+}
+
+.primaryButton:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.ghostButton {
+	border: 1px solid var(--border);
+	background: rgba(255, 255, 255, 0.03);
+	color: var(--text-muted);
+}
+
+.ghostButton:hover {
+	border-color: rgba(255, 255, 255, 0.2);
+	color: var(--text-main);
+}

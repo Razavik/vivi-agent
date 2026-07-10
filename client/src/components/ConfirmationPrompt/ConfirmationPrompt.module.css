@@ -77,7 +77,7 @@
 
 .approveBtn {
 	background: var(--ok);
-	color: #07140f;
+	color: #160b20;
 	border-color: transparent;
 }
 
@@ -106,3 +106,5 @@
 		width: 100%;
 	}
 }
+
+

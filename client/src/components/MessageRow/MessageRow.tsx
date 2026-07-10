@@ -1,28 +1,42 @@
-import { useState } from "react";
 import ReactMarkdown from "react-markdown";
+import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import styles from "./MessageRow.module.css";
 import type { ChatEvent } from "../../types";
+import { ImageThumbGrid } from "../ImageThumbGrid/ImageThumbGrid";
+import { extractMarkdownImages, normalizeAssistantText } from "../../utils/renderText";
 
 interface MessageRowProps {
 	message: ChatEvent;
 }
 
-export function MessageRow({ message }: MessageRowProps) {
-	const [lightbox, setLightbox] = useState<string | null>(null);
+const markdownComponents: Components = {
+	pre({ children }) {
+		return <pre className={styles.codeBlock}>{children}</pre>;
+	},
+	code({ children, ...props }) {
+		return (
+			<code className={styles.inlineCode} {...props}>
+				{children}
+			</code>
+		);
+	},
+};
 
-	const markdownComponents = {
-		pre({ children }: any) {
-			return <pre className={styles.codeBlock}>{children}</pre>;
-		},
-		code({ children, ...props }: any) {
-			return (
-				<code className={styles.inlineCode} {...props}>
-					{children}
-				</code>
-			);
-		},
-	};
+export function MessageRow({ message }: MessageRowProps) {
+	const isAssistant = message.role === "assistant";
+	// Картинки, встроенные оператором/саб-агентом в текст (finish_task(attach_images=true)
+	// — URL артефакта /api/artifact-image/...), вырезаются из markdown и рисуются
+	// отдельной сеткой маленьких превью — как и вложения пользователя, одним и тем же
+	// компонентом с общим lightbox, а не полноразмерными блоками прямо в тексте.
+	const { text: displayText, images: markdownImages } = isAssistant
+		? extractMarkdownImages(normalizeAssistantText(message.content || ""))
+		: { text: message.content || "", images: [] as string[] };
+
+	const uploadedImages = (message.images ?? []).map(
+		(b64) => `data:image/png;base64,${b64}`,
+	);
+	const allImages = [...uploadedImages, ...markdownImages];
 
 	return (
 		<div
@@ -30,36 +44,11 @@ export function MessageRow({ message }: MessageRowProps) {
 		>
 			<div className={styles.eventContent}>
 				{message.role === "user" && <div className={styles.eventLabel}>Вы</div>}
-				{message.images && message.images.length > 0 && (
-					<div className={styles.imageGrid}>
-						{message.images.map((b64, idx) => (
-							<img
-								key={idx}
-								src={`data:image/png;base64,${b64}`}
-								className={styles.messageImage}
-								alt={`image-${idx}`}
-								onClick={() => setLightbox(`data:image/png;base64,${b64}`)}
-							/>
-						))}
-					</div>
-				)}
-				{lightbox && (
-					<div className={styles.lightboxOverlay} onClick={() => setLightbox(null)}>
-						<img
-							src={lightbox}
-							className={styles.lightboxImage}
-							alt="full"
-							onClick={(e) => e.stopPropagation()}
-						/>
-						<button className={styles.lightboxClose} onClick={() => setLightbox(null)}>
-							×
-						</button>
-					</div>
-				)}
+				<ImageThumbGrid images={allImages} />
 				<div className={styles.eventText}>
-					{message.role === "assistant" ? (
+					{isAssistant ? (
 						<ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-							{message.content || ""}
+							{displayText}
 						</ReactMarkdown>
 					) : (
 						message.content || ""

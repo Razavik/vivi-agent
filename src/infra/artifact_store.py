@@ -47,6 +47,24 @@ class ArtifactStore:
 
         return {"name": name, "mime_type": mime_type, "size": len(data), "path": str(file_path)}
 
+    def read_bytes(self, run_id: str, name: str) -> tuple[bytes, str] | None:
+        """Читает артефакт как есть (без hex-кодирования) — для прямой HTTP-отдачи
+        бинарного содержимого (например картинок) с правильным Content-Type."""
+        run_dir = self._run_dir(run_id)
+        file_path = run_dir / name
+        meta_path = run_dir / f"{name}.meta.json"
+        if not file_path.exists():
+            return None
+
+        mime_type = "application/octet-stream"
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                mime_type = meta.get("mime_type", mime_type)
+            except Exception:
+                pass
+        return file_path.read_bytes(), mime_type
+
     def read(self, run_id: str, name: str) -> dict[str, Any]:
         run_dir = self._run_dir(run_id)
         file_path = run_dir / name

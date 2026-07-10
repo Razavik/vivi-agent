@@ -28,11 +28,12 @@ def finish_task(args: dict[str, object]) -> dict[str, object]:
         if isinstance(value, list):
             result[field] = [str(item) for item in value if str(item).strip()]
 
+    # attach_images — просто маркер для runtime (AgentRuntime/SubAgent): finish_task
+    # сам не знает, какие картинки видел агент за этот run — это состояние уровня
+    # runtime, а не этой чистой функции. Runtime встраивает markdown-картинки в
+    # summary ПОСЛЕ вызова этого обработчика, см. _execute_step.
+    attach_images = args.get("attach_images")
+    if isinstance(attach_images, bool):
+        result["attach_images"] = attach_images
+
     return result
-
-
-def send_message(args: dict[str, object]) -> dict[str, object]:
-    message = args.get("message")
-    if not isinstance(message, str) or not message.strip():
-        return {"error": "Поле message не должно быть пустым"}
-    return {"message": message.strip()}

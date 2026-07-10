@@ -1,0 +1,40 @@
+.bar {
+	display: flex;
+	gap: 8px;
+	padding: 12px 14px 10px;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+	background: var(--bg-sidebar);
+}
+
+.btn {
+	font-size: 12px;
+	padding: 8px 14px;
+	border-radius: 999px;
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	background: transparent;
+	color: var(--text-muted);
+	cursor: pointer;
+	transition:
+		background 0.16s ease,
+		color 0.16s ease,
+		border-color 0.16s ease,
+		transform 0.16s ease;
+	letter-spacing: 0.01em;
+}
+
+.btn:hover {
+	background: rgba(255, 255, 255, 0.06);
+	color: var(--text-main);
+	transform: translateY(-1px);
+}
+
+.btn.active {
+	background: linear-gradient(
+		180deg,
+		rgba(192, 132, 252, 0.18),
+		rgba(236, 72, 153, 0.12)
+	);
+	color: var(--accent);
+	font-weight: 700;
+	border-color: rgba(192, 132, 252, 0.26);
+}

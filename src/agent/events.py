@@ -13,7 +13,6 @@ EventName = Literal[
     "confirmation_requested",
     "confirmation_result",
     "context_tokens",
-    "intermediate_message",
     "llm_step",
     "loop_detected",
     "plan_updated",

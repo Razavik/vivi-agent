@@ -12,3 +12,4 @@ export function LiveStatus({ status }: LiveStatusProps) {
 		</div>
 	);
 }
+

@@ -15,7 +15,7 @@ export interface ChatEvent {
 	images?: string[];
 	thought?: string;
 	action?: string;
-	result?: any;
+	result?: unknown;
 	success?: boolean;
 	step?: number;
 	plan?: PlanItem[];
@@ -34,8 +34,8 @@ export interface SubAgentStep {
 	step: number;
 	thought?: string;
 	action?: string;
-	args?: any;
-	result?: any;
+	args?: Record<string, unknown>;
+	result?: unknown;
 	success?: boolean;
 	streamLines?: string[];
 }
@@ -52,6 +52,10 @@ export interface SubAgentPane {
 	id: string;
 	name: string;
 	displayName: string;
+	description?: string;
+	capabilities?: string[];
+	whenToUse?: string;
+	limits?: string[];
 	task: string;
 	status: SubAgentStatus;
 	steps: SubAgentStep[];
@@ -76,7 +80,7 @@ export interface Tool {
 
 export interface SSEEvent {
 	event: string;
-	payload: any;
+	payload: unknown;
 }
 
 export interface ConfirmationRequest {
@@ -116,87 +120,4 @@ export interface SupervisorAlert {
 	event: string;
 	payload: SupervisorAlertPayload;
 	timestamp: number;
-}
-
-export type DiagnosticStatus = "pass" | "warn" | "fail" | "skip";
-export type DiagnosticSeverity = "info" | "medium" | "high" | "critical";
-
-export interface DiagnosticCheck {
-	id: string;
-	title: string;
-	status: DiagnosticStatus;
-	severity: DiagnosticSeverity;
-	summary: string;
-	action?: string;
-	details?: Record<string, unknown>;
-}
-
-export interface DiagnosticsReport {
-	generated_at: number;
-	score: number;
-	status: "healthy" | "attention" | "critical";
-	counts: Record<DiagnosticStatus, number>;
-	summary: string;
-	checks: DiagnosticCheck[];
-	facts: Record<string, unknown>;
-}
-
-export interface PreflightReport {
-	allowed: boolean;
-	status: "passed" | "blocked";
-	summary: string;
-	blocking: DiagnosticCheck[];
-	warnings: DiagnosticCheck[];
-	report: DiagnosticsReport;
-	task?: string;
-}
-
-export interface PostRunReview {
-	id: string;
-	created_at: number;
-	task: string;
-	status: "clean" | "needs_attention";
-	summary: string;
-	result_error?: string;
-	result_summary?: string;
-	log_file?: string;
-	diagnostics_score?: number;
-	diagnostics_status?: string;
-	preflight_status?: string;
-	failed_checks: DiagnosticCheck[];
-	warning_checks: DiagnosticCheck[];
-}
-
-export interface AgentScorecardItem {
-	agent: string;
-	total: number;
-	finished: number;
-	failed: number;
-	cancelled: number;
-	blocked: number;
-	retries: number;
-	interrupts: number;
-	avg_steps: number;
-	success_rate: number;
-}
-
-export interface MemoryInspectionItem {
-	agent: string;
-	display_name: string;
-	file: string;
-	exists: boolean;
-	updated_at?: string;
-	messages: number;
-	assistant_messages: number;
-	user_messages: number;
-	actions: number;
-	facts: string[];
-	stale: boolean;
-}
-
-export interface TaskTemplate {
-	id: string;
-	title: string;
-	prompt: string;
-	quality_gates: string[];
 }

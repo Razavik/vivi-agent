@@ -1,107 +1,32 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import styles from "./AgentChatPage.module.css";
-import type { PlanItem, SubAgentPane, SubAgentSession, SubAgentStep } from "../../types";
-
-interface ArtifactMeta {
-	name: string;
-	mime_type: string;
-	size: number;
-	created_at?: number;
-}
-
-interface ArtifactContent extends ArtifactMeta {
-	content: string;
-}
-
-function ArtifactsPanel({ runId }: { runId: string }) {
-	const [artifacts, setArtifacts] = useState<ArtifactMeta[]>([]);
-	const [selected, setSelected] = useState<ArtifactContent | null>(null);
-	const [loading, setLoading] = useState(false);
-
-	const reload = useCallback(async () => {
-		try {
-			const res = await fetch(`/api/runs/${runId}/artifacts`);
-			const data = await res.json();
-			setArtifacts(data.artifacts ?? []);
-		} catch {
-			// ignore
-		}
-	}, [runId]);
-
-	useEffect(() => {
-		void reload();
-		const timer = setInterval(() => void reload(), 5000);
-		return () => clearInterval(timer);
-	}, [reload]);
-
-	const openArtifact = async (name: string) => {
-		setLoading(true);
-		try {
-			const res = await fetch(`/api/runs/${runId}/artifacts/${encodeURIComponent(name)}`);
-			const data = await res.json();
-			setSelected(data);
-		} catch {
-			// ignore
-		} finally {
-			setLoading(false);
-		}
-	};
-
-	if (!artifacts.length) {
-		return <div className={styles.artifactsEmpty}>Нет артефактов</div>;
-	}
-
-	return (
-		<div className={styles.artifactsPanel}>
-			<div className={styles.artifactsList}>
-				{artifacts.map((a) => (
-					<div
-						key={a.name}
-						className={`${styles.artifactItem} ${selected?.name === a.name ? styles.artifactSelected : ""}`}
-						onClick={() => void openArtifact(a.name)}
-					>
-						<div className={styles.artifactName}>{a.name}</div>
-						<div className={styles.artifactMeta}>
-							<span>{a.mime_type}</span>
-							<span>{(a.size / 1024).toFixed(1)} KB</span>
-						</div>
-					</div>
-				))}
-			</div>
-			{selected && (
-				<div className={styles.artifactViewer}>
-					<div className={styles.artifactViewerHeader}>
-						<span>{selected.name}</span>
-						<span className={styles.artifactViewerMime}>{selected.mime_type}</span>
-						<button
-							className={styles.artifactCloseBtn}
-							onClick={() => setSelected(null)}
-						>
-							✕
-						</button>
-					</div>
-					{loading ? (
-						<div className={styles.artifactLoading}>Загрузка…</div>
-					) : selected.mime_type.startsWith("text/") ? (
-						<pre className={styles.artifactContent}>{selected.content}</pre>
-					) : (
-						<div className={styles.artifactContent}>
-							<span className={styles.artifactBinary}>
-								[binary: {selected.content.length / 2} bytes]
-							</span>
-						</div>
-					)}
-				</div>
-			)}
-		</div>
-	);
-}
+import type {
+	PlanItem,
+	SubAgentPane,
+	SubAgentSession,
+	SubAgentStep,
+} from "../../types";
+import { readJson } from "../../utils/http";
+import { extractMarkdownImages } from "../../utils/renderText";
+import { ImageThumbGrid } from "../../components/ImageThumbGrid/ImageThumbGrid";
+import { AgentList } from "./components/sidebar/AgentList";
+import { PlanSidebar } from "./components/plan/PlanSidebar";
 
 interface AgentChatPageProps {
 	panes: SubAgentPane[];
+	onClearSubAgentPanes?: (agentName?: string) => void;
+}
+
+interface AgentConfigEntry {
+	display_name?: string;
+	description?: string;
+	capabilities?: string[];
+	when_to_use?: string;
+	limits?: string[];
 }
 
 const AGENT_DISPLAY_NAMES: Record<string, string> = {
@@ -111,7 +36,11 @@ const AGENT_DISPLAY_NAMES: Record<string, string> = {
 	web: "Веб-агент",
 };
 
-function historyToPane(name: string, displayName: string, chatHistory: any[]): SubAgentPane {
+function historyToPane(
+	name: string,
+	displayName: string,
+	chatHistory: any[],
+): SubAgentPane {
 	const sessions: SubAgentSession[] = [];
 	let pendingTask = "";
 
@@ -119,7 +48,12 @@ function historyToPane(name: string, displayName: string, chatHistory: any[]): S
 		if (msg.role === "user") {
 			pendingTask = msg.content ?? "";
 		}
-		if (msg.role === "assistant") {
+		if (
+			msg.role === "assistant" &&
+			(Boolean(msg.content) ||
+				(Array.isArray(msg.plan) && msg.plan.length > 0) ||
+				Array.isArray(msg.actions))
+		) {
 			const steps: SubAgentStep[] = [];
 			const plan: PlanItem[] = Array.isArray(msg.plan) ? msg.plan : [];
 			if (Array.isArray(msg.actions)) {
@@ -176,7 +110,10 @@ function historyToPane(name: string, displayName: string, chatHistory: any[]): S
 	};
 }
 
-function buildPaneList(activePanes: SubAgentPane[], historicPanes: SubAgentPane[]): SubAgentPane[] {
+function buildPaneList(
+	activePanes: SubAgentPane[],
+	historicPanes: SubAgentPane[],
+): SubAgentPane[] {
 	// Группируем активные panes по name — оставляем только последний запуск,
 	// предыдущие запуски складываем в sessions
 	const grouped = new Map<string, SubAgentPane>();
@@ -194,7 +131,11 @@ function buildPaneList(activePanes: SubAgentPane[], historicPanes: SubAgentPane[
 				};
 				const merged = {
 					...pane,
-					sessions: [...(pane.sessions ?? []), ...(existing.sessions ?? []), prevSession],
+					sessions: [
+						...(pane.sessions ?? []),
+						...(existing.sessions ?? []),
+						prevSession,
+					],
 				};
 				grouped.set(pane.name, merged);
 			} else {
@@ -211,13 +152,53 @@ function buildPaneList(activePanes: SubAgentPane[], historicPanes: SubAgentPane[
 			};
 			grouped.set(pane.name, {
 				...existing,
-				sessions: [...(existing.sessions ?? []), ...(pane.sessions ?? []), prevSession],
+				sessions: [
+					...(existing.sessions ?? []),
+					...(pane.sessions ?? []),
+					prevSession,
+				],
 			});
 		}
 	}
 	const mergedActive = Array.from(grouped.values());
-	const activeNames = new Set(mergedActive.map((pane) => pane.name));
-	return [...mergedActive, ...historicPanes.filter((pane) => !activeNames.has(pane.name))];
+
+	// Теперь объединяем с историческими панелями
+	const finalGrouped = new Map<string, SubAgentPane>();
+	for (const pane of mergedActive) {
+		finalGrouped.set(pane.name, pane);
+	}
+	for (const pane of historicPanes) {
+		const existing = finalGrouped.get(pane.name);
+		if (!existing) {
+			// Если нет активной панели с таким именем, добавляем историческую
+			finalGrouped.set(pane.name, pane);
+			continue;
+		}
+		// Предпочитаем активную (live SSE) панель, но только если в ней реально
+		// есть данные. Живая панель может прийти пустой (steps/sessions), если
+		// sub_agent_step-события не успели накопиться в состоянии до момента
+		// рендера — тогда историческая панель с сохранённой памятью агента
+		// полнее и должна победить, даже если её статус не idle.
+		const existingHasContent =
+			existing.steps.length > 0 ||
+			(existing.sessions?.length ?? 0) > 0 ||
+			Boolean(existing.result);
+		if (existing.status === "idle" && pane.status !== "idle") {
+			finalGrouped.set(pane.name, pane);
+			continue;
+		}
+		if (!existingHasContent) {
+			const hasHistoricContent =
+				pane.steps.length > 0 ||
+				(pane.sessions?.length ?? 0) > 0 ||
+				Boolean(pane.result);
+			if (hasHistoricContent) {
+				finalGrouped.set(pane.name, { ...pane, status: existing.status });
+			}
+		}
+	}
+
+	return Array.from(finalGrouped.values());
 }
 
 function fmt(value: unknown): string {
@@ -242,7 +223,9 @@ function StepBlock({ step }: { step: SubAgentStep }) {
 	);
 
 	return (
-		<div className={`${styles.stepBlock} ${styles[st]} ${expanded ? styles.stepExpanded : ""}`}>
+		<div
+			className={`${styles.stepBlock} ${styles[st]} ${expanded ? styles.stepExpanded : ""}`}
+		>
 			<div
 				className={styles.stepHeader}
 				onClick={() => hasDetails && setExpanded(!expanded)}
@@ -250,7 +233,9 @@ function StepBlock({ step }: { step: SubAgentStep }) {
 			>
 				<span className={`${styles.stepDot} ${styles[st]}`} />
 				{step.action && (
-					<span className={`${styles.stepAction} ${styles[st]}`}>{step.action}</span>
+					<span className={`${styles.stepAction} ${styles[st]}`}>
+						{step.action}
+					</span>
 				)}
 				{hasResult && (
 					<span className={`${styles.stepBadge} ${styles[st]}`}>
@@ -277,42 +262,19 @@ function StepBlock({ step }: { step: SubAgentStep }) {
 			</div>
 			{expanded && (
 				<div className={styles.stepBody}>
-					{step.thought && <div className={styles.stepThought}>{step.thought}</div>}
-					{step.streamLines && step.streamLines.length > 0 && (
-						<pre className={styles.stepStreamPre}>{step.streamLines.join("\n")}</pre>
+					{step.thought && (
+						<div className={styles.stepThought}>{step.thought}</div>
 					)}
-					{hasResult && resultStr && <pre className={styles.resultPre}>{resultStr}</pre>}
+					{step.streamLines && step.streamLines.length > 0 && (
+						<pre className={styles.stepStreamPre}>
+							{step.streamLines.join("\n")}
+						</pre>
+					)}
+					{hasResult && resultStr && (
+						<pre className={styles.resultPre}>{resultStr}</pre>
+					)}
 				</div>
 			)}
-		</div>
-	);
-}
-
-const PLAN_ICONS: Record<string, string> = {
-	completed: "✓",
-	in_progress: "◌",
-	pending: "○",
-};
-
-function PlanBlock({ plan }: { plan: PlanItem[] }) {
-	if (!plan.length) return null;
-	const done = plan.filter((item) => item.status === "completed").length;
-	return (
-		<div className={styles.planBlock}>
-			<div className={styles.planHeader}>
-				<span className={styles.planLabel}>План</span>
-				<span className={styles.planCounter}>
-					{done} / {plan.length} tasks done
-				</span>
-			</div>
-			<div className={styles.planList}>
-				{plan.map((item) => (
-					<div key={item.id} className={`${styles.planItem} ${styles[item.status]}`}>
-						<span className={styles.planIcon}>{PLAN_ICONS[item.status] ?? "○"}</span>
-						<span className={styles.planContent}>{item.content}</span>
-					</div>
-				))}
-			</div>
 		</div>
 	);
 }
@@ -327,14 +289,23 @@ function SessionBlock({
 	allSessions: SubAgentSession[];
 }) {
 	const prevModel = index > 0 ? allSessions[index - 1].model : null;
-	const modelChanged = index > 0 && session.model && session.model !== prevModel;
+	const modelChanged =
+		index > 0 && session.model && session.model !== prevModel;
+	const { text: taskText, images: taskImages } = extractMarkdownImages(
+		session.task || "",
+	);
+	const { text: resultText, images: resultImages } = extractMarkdownImages(
+		session.result || "",
+	);
 	return (
 		<div>
 			{index > 0 && (
 				<div className={styles.sessionDivider}>
 					<span className={styles.sessionDividerLine} />
 					{modelChanged && (
-						<span className={styles.sessionDividerLabel}>модель: {session.model}</span>
+						<span className={styles.sessionDividerLabel}>
+							модель: {session.model}
+						</span>
 					)}
 					<span className={styles.sessionDividerLine} />
 				</div>
@@ -343,19 +314,28 @@ function SessionBlock({
 				<div className={styles.taskBannerRow}>
 					<div>
 						<div className={styles.taskLabel}>Задача</div>
-						<ReactMarkdown remarkPlugins={[remarkGfm]}>{session.task}</ReactMarkdown>
+						<ReactMarkdown remarkPlugins={[remarkGfm]}>
+							{taskText}
+						</ReactMarkdown>
+						<ImageThumbGrid images={taskImages} />
 					</div>
-					{session.model && <span className={styles.modelBadge}>{session.model}</span>}
+					{session.model && (
+						<span className={styles.modelBadge}>
+							{session.model}
+						</span>
+					)}
 				</div>
 			</div>
-			<PlanBlock plan={session.plan ?? []} />
 			{session.steps.map((step, i) => (
 				<StepBlock key={i} step={step} />
 			))}
 			{session.result && (
 				<div className={`${styles.resultBanner} ${styles.success}`}>
 					<div className={styles.resultBannerLabel}>Результат</div>
-					<ReactMarkdown remarkPlugins={[remarkGfm]}>{session.result}</ReactMarkdown>
+					<ReactMarkdown remarkPlugins={[remarkGfm]}>
+						{resultText}
+					</ReactMarkdown>
+					<ImageThumbGrid images={resultImages} />
 				</div>
 			)}
 		</div>
@@ -376,7 +356,12 @@ function AgentChat({ pane }: { pane: SubAgentPane }) {
 	const hasUnsavedSteps = pane.steps.length > sessionsStepCount;
 	const activeSession: SubAgentSession | null =
 		hasUnsavedSteps || pane.status === "running"
-			? { task: pane.task, model: pane.model || "", steps: pane.steps, plan: pane.plan ?? [] }
+			? {
+					task: pane.task,
+					model: pane.model || "",
+					steps: pane.steps,
+					plan: pane.plan ?? [],
+				}
 			: null;
 
 	const allSessions: SubAgentSession[] = [
@@ -387,7 +372,12 @@ function AgentChat({ pane }: { pane: SubAgentPane }) {
 	return (
 		<div className={styles.agentChat}>
 			{allSessions.map((session, i) => (
-				<SessionBlock key={i} session={session} index={i} allSessions={allSessions} />
+				<SessionBlock
+					key={i}
+					session={session}
+					index={i}
+					allSessions={allSessions}
+				/>
 			))}
 
 			<div ref={bottomRef} />
@@ -395,162 +385,109 @@ function AgentChat({ pane }: { pane: SubAgentPane }) {
 	);
 }
 
-type ChatTab = "log" | "artifacts" | "timeline";
-
-interface TimelineEvent {
-	time: string;
-	kind: string;
-	label: string;
-	detail?: string;
-}
-
-function buildTimeline(pane: SubAgentPane): TimelineEvent[] {
-	const events: TimelineEvent[] = [];
-	const fmt = (ts: number) =>
-		new Date(ts).toLocaleTimeString("ru-RU", {
-			hour: "2-digit",
-			minute: "2-digit",
-			second: "2-digit",
-		});
-
-	if (pane.startedAt) {
-		events.push({
-			time: fmt(pane.startedAt),
-			kind: "start",
-			label: "Запущен",
-			detail: pane.task,
-		});
-	}
-
-	const allSessions = pane.sessions ?? [];
-	for (const session of allSessions) {
-		for (const step of session.steps) {
-			if (step.action === "ask_director") {
-				events.push({
-					time: "",
-					kind: "question",
-					label: "Вопрос директору",
-					detail: step.args ? JSON.stringify(step.args) : "",
-				});
-			} else if (step.action === "finish_task") {
-				events.push({
-					time: "",
-					kind: "finish",
-					label: "Завершён",
-					detail: String(step.args?.summary ?? ""),
-				});
-			} else if (step.action) {
-				events.push({
-					time: "",
-					kind: step.success === false ? "fail" : "step",
-					label: step.action,
-					detail: step.thought,
-				});
-			}
-		}
-	}
-
-	const liveSteps = pane.steps.filter((s) => !allSessions.flatMap((ss) => ss.steps).includes(s));
-	for (const step of liveSteps) {
-		events.push({
-			time: "",
-			kind: step.success === false ? "fail" : step.result !== undefined ? "step" : "pending",
-			label: step.action ?? "…",
-			detail: step.thought,
-		});
-	}
-
-	if (pane.question) {
-		events.push({
-			time: "",
-			kind: "question",
-			label: "Вопрос директору",
-			detail: pane.question,
-		});
-	}
-	if (pane.status === "paused") {
-		events.push({ time: "", kind: "pause", label: "На паузе" });
-	}
-	if (pane.result && pane.status === "done") {
-		events.push({
-			time: "",
-			kind: "finish",
-			label: "Готово",
-			detail: pane.result.slice(0, 120),
-		});
-	}
-	if (pane.status === "error") {
-		events.push({ time: "", kind: "error", label: "Ошибка", detail: pane.errorMessage });
-	}
-
-	return events;
-}
-
-const TL_COLORS: Record<string, string> = {
-	start: "var(--accent)",
-	step: "rgba(255,255,255,0.2)",
-	fail: "var(--err)",
-	finish: "var(--ok)",
-	question: "var(--warn)",
-	pause: "var(--warn)",
-	error: "var(--err)",
-	pending: "#7eb0ff",
-};
-
-function TimelinePanel({ pane }: { pane: SubAgentPane }) {
-	const events = buildTimeline(pane);
-	if (!events.length) {
-		return (
-			<div className={styles.chatEmpty}>
-				<div>Нет событий</div>
-			</div>
-		);
-	}
-	return (
-		<div className={styles.timeline}>
-			{events.map((ev, i) => (
-				<div key={i} className={styles.tlRow}>
-					<div className={styles.tlLeft}>
-						{ev.time && <span className={styles.tlTime}>{ev.time}</span>}
-						<span
-							className={styles.tlDot}
-							style={{ background: TL_COLORS[ev.kind] ?? "var(--border)" }}
-						/>
-						{i < events.length - 1 && <span className={styles.tlLine} />}
-					</div>
-					<div className={styles.tlContent}>
-						<span
-							className={styles.tlLabel}
-							style={{ color: TL_COLORS[ev.kind] ?? "var(--text-muted)" }}
-						>
-							{ev.label}
-						</span>
-						{ev.detail && <span className={styles.tlDetail}>{ev.detail}</span>}
-					</div>
-				</div>
-			))}
-		</div>
-	);
-}
-
-export function AgentChatPage({ panes }: AgentChatPageProps) {
+export function AgentChatPage({ panes, onClearSubAgentPanes }: AgentChatPageProps) {
 	const { paneId } = useParams<{ paneId: string }>();
 	const navigate = useNavigate();
 	const [historicPanes, setHistoricPanes] = useState<SubAgentPane[]>([]);
-	const [activeTab, setActiveTab] = useState<ChatTab>("log");
+	const [configuredPanes, setConfiguredPanes] = useState<SubAgentPane[]>([]);
+
+	const loadConfiguredAgents = useCallback(async () => {
+		try {
+			const res = await fetch("/api/agents-config");
+			const data = await readJson<{
+				config?: Record<string, AgentConfigEntry>;
+			}>(res, {
+				config: {},
+			});
+			const config = (data.config ?? {}) as Record<
+				string,
+				AgentConfigEntry
+			>;
+			const loaded = Object.entries(config)
+				.filter(([name]) => name !== "operator")
+				.map(([name, cfg]) => ({
+					id: `config:${name}`,
+					name,
+					displayName:
+						cfg.display_name || AGENT_DISPLAY_NAMES[name] || name,
+					description: cfg.description,
+					capabilities: cfg.capabilities ?? [],
+					whenToUse: cfg.when_to_use,
+					limits: cfg.limits ?? [],
+					task: "",
+					status: "idle" as const,
+					steps: [],
+					sessions: [],
+					startedAt: 0,
+				}));
+			setConfiguredPanes(loaded);
+		} catch {
+			// ignore config load errors
+		}
+	}, []);
+
+	// Преобразует активный запуск агента в SubAgentPane
+	function activeRunToPane(run: any): SubAgentPane {
+		return {
+			id: `history:${run.agent_name}`,
+			name: run.agent_name,
+			displayName: AGENT_DISPLAY_NAMES[run.agent_name] ?? run.agent_name,
+			task: run.task ?? "",
+			status: run.status === "running" ? "running" : "idle",
+			steps: [],
+			sessions: [],
+			startedAt: run.created_at ?? Date.now(),
+			model: run.model,
+			result: run.result,
+			errorMessage: run.error,
+		};
+	}
 
 	const loadHistory = useCallback(async () => {
 		try {
-			const res = await fetch("/api/agents/history");
-			const data = await res.json();
-			const loaded: SubAgentPane[] = (data.agents ?? []).map((agent: any) =>
-				historyToPane(
-					agent.name,
-					AGENT_DISPLAY_NAMES[agent.name] ?? agent.name,
-					agent.chat_history ?? [],
-				),
+			// Загружаем историю агентов
+			const historyRes = await fetch("/api/agents/history");
+			const historyData = await readJson<{ agents?: any[] }>(historyRes, {
+				agents: [],
+			});
+			const historyPanes: SubAgentPane[] = (historyData.agents ?? []).map(
+				(agent: any) =>
+					historyToPane(
+						agent.name,
+						AGENT_DISPLAY_NAMES[agent.name] ?? agent.name,
+						agent.chat_history ?? [],
+					),
 			);
-			setHistoricPanes(loaded);
+
+			// Загружаем активные запуски
+			const runsRes = await fetch("/api/runs");
+			const runsData = await readJson<{ runs?: any[] }>(runsRes, {
+				runs: [],
+			});
+			const activeRuns: SubAgentPane[] = (runsData.runs ?? []).map(
+				(run: any) => activeRunToPane(run),
+			);
+
+			// Объединяем: активный запуск даёт актуальный статус, но не должен
+			// затирать уже накопленные шаги/сессии из истории — activeRunToPane
+			// всегда возвращает пустые steps/sessions (в процессе запуска они ещё
+			// не записаны на диск), поэтому наложение статуса не должно стирать
+			// то, что уже было загружено из /api/agents/history.
+			const merged = new Map<string, SubAgentPane>();
+			for (const pane of historyPanes) {
+				merged.set(pane.name, pane);
+			}
+			for (const pane of activeRuns) {
+				const existing = merged.get(pane.name);
+				merged.set(pane.name, {
+					...pane,
+					status: "running",
+					steps: existing?.steps ?? pane.steps,
+					sessions: existing?.sessions ?? pane.sessions,
+				});
+			}
+
+			setHistoricPanes(Array.from(merged.values()));
 		} catch {
 			// ignore history load errors
 		}
@@ -559,48 +496,76 @@ export function AgentChatPage({ panes }: AgentChatPageProps) {
 	const clearAgent = useCallback(
 		async (agentName: string) => {
 			await fetch(`/api/agents/${agentName}/clear`, { method: "POST" });
+			// Очищаем сохранённую на диске историю И живое состояние панели
+			// (subAgentPanes на уровне App) — иначе buildPaneList продолжит
+			// показывать уже накопленные в памяти шаги, т.к. "живая" панель с
+			// реальным run_id побеждает историческую при слиянии.
+			onClearSubAgentPanes?.(agentName);
 			await loadHistory();
 		},
-		[loadHistory],
-	);
-
-	const clearAgentRuns = useCallback(
-		async (agentName: string) => {
-			await fetch(`/api/agents/${agentName}/clear-runs`, { method: "POST" });
-			await loadHistory();
-		},
-		[loadHistory],
+		[loadHistory, onClearSubAgentPanes],
 	);
 
 	const clearAll = useCallback(async () => {
 		await fetch("/api/agents/clear/all", { method: "POST" });
+		onClearSubAgentPanes?.();
 		await loadHistory();
-	}, [loadHistory]);
-
-	const cancelSelectedRun = useCallback(async (runId: string) => {
-		await fetch(`/api/runs/${runId}/cancel`, { method: "POST" });
-	}, []);
-
-	const pauseSelectedRun = useCallback(async (runId: string) => {
-		await fetch(`/api/runs/${runId}/pause`, { method: "POST" });
-	}, []);
-
-	const resumeSelectedRun = useCallback(async (runId: string) => {
-		await fetch(`/api/runs/${runId}/resume`, { method: "POST" });
-	}, []);
+		// Сбросить selectedId после очистки или выбрать первый доступный
+		if (paneId) {
+			navigate("/agents");
+		}
+	}, [loadHistory, navigate, onClearSubAgentPanes, paneId]);
 
 	useEffect(() => {
-		void loadHistory();
-	}, [loadHistory]);
+		const timer = window.setTimeout(() => {
+			void loadConfiguredAgents();
+			void loadHistory();
+		}, 0);
+		return () => window.clearTimeout(timer);
+	}, [loadConfiguredAgents, loadHistory]);
 
 	useEffect(() => {
-		const hasDone = panes.some((pane) => pane.status === "done" || pane.status === "error");
-		if (hasDone) void loadHistory();
+		const hasDone = panes.some(
+			(pane) => pane.status === "done" || pane.status === "error",
+		);
+		if (!hasDone) return;
+		const timer = window.setTimeout(() => void loadHistory(), 0);
+		return () => window.clearTimeout(timer);
 	}, [panes, loadHistory]);
 
-	const allPanes = buildPaneList(panes, historicPanes);
+	// Периодическое обновление статуса активных агентов
+	useEffect(() => {
+		const hasRunning = panes.some((pane) => pane.status === "running");
+		if (!hasRunning) return;
+
+		const interval = window.setInterval(() => {
+			void loadHistory();
+		}, 2000); // Обновляем каждые 2 секунды
+
+		return () => window.clearInterval(interval);
+	}, [panes, loadHistory]);
+
+	const configByName = new Map(
+		configuredPanes.map((pane) => [pane.name, pane]),
+	);
+	const allPanes = buildPaneList(panes, [
+		...historicPanes,
+		...configuredPanes,
+	]).map((pane) => {
+		const meta = configByName.get(pane.name);
+		if (!meta) return pane;
+		return {
+			...pane,
+			description: pane.description ?? meta.description,
+			capabilities: pane.capabilities ?? meta.capabilities,
+			whenToUse: pane.whenToUse ?? meta.whenToUse,
+			limits: pane.limits ?? meta.limits,
+		};
+	});
 	const selectedId =
-		paneId && allPanes.find((pane) => pane.id === paneId) ? paneId : allPanes[0]?.id;
+		paneId && allPanes.find((pane) => pane.id === paneId)
+			? paneId
+			: allPanes[0]?.id;
 
 	useEffect(() => {
 		if (!allPanes.length) return;
@@ -613,161 +578,68 @@ export function AgentChatPage({ panes }: AgentChatPageProps) {
 		return <div className={styles.chatEmpty}>Нет данных по агентам</div>;
 	}
 
-	const activePane = allPanes.find((pane) => pane.id === selectedId) ?? allPanes[0];
+	const activePane =
+		allPanes.find((pane) => pane.id === selectedId) ?? allPanes[0];
 
 	return (
 		<div className={styles.page}>
-			<aside className={styles.sidebar}>
-				<div className={styles.sidebarHeader}>
-					<span>Агенты</span>
-					<button
-						className={styles.clearAllBtn}
-						onClick={clearAll}
-						title="Очистить память всех агентов"
-					>
-						Очистить все
-					</button>
-				</div>
-				<div className={styles.agentList}>
-					{allPanes.map((pane) => (
-						<div
-							key={pane.id}
-							className={`${styles.agentCard} ${selectedId === pane.id ? styles.selected : ""}`}
-							onClick={() => navigate(`/agents/${pane.id}`)}
-						>
-							<span className={`${styles.cardDot} ${styles[pane.status]}`} />
-							<div className={styles.cardInfo}>
-								<div className={styles.cardName}>{pane.displayName}</div>
-								<div className={styles.cardTask}>
-									{pane.task || "Ещё не запускался"}
-								</div>
-							</div>
-							<div className={styles.cardActions}>
-								{pane.steps.length > 0 && (
-									<span className={styles.cardSteps}>{pane.steps.length}</span>
-								)}
-								{pane.id.startsWith("history:") &&
-									(pane.status === "done" || pane.status === "error") && (
-										<>
-											<button
-												className={styles.clearCardBtn}
-												title="Очистить runs"
-												onClick={(e) => {
-													e.stopPropagation();
-													void clearAgentRuns(pane.name);
-												}}
-											>
-												🗑
-											</button>
-											<button
-												className={styles.clearCardBtn}
-												title="Очистить память агента"
-												onClick={(e) => {
-													e.stopPropagation();
-													void clearAgent(pane.name);
-												}}
-											>
-												✕
-											</button>
-										</>
-									)}
-							</div>
-						</div>
-					))}
-				</div>
-			</aside>
+			<AgentList
+				panes={allPanes}
+				selectedId={selectedId}
+				onSelect={(id) => navigate(`/agents/${id}`)}
+				onClearAgent={clearAgent}
+				onClearAll={clearAll}
+			/>
 
 			<div className={styles.chatArea}>
-				<div className={styles.chatHeader}>
-					<span className={`${styles.chatHeaderDot} ${styles[activePane.status]}`} />
-					<span className={styles.chatHeaderName}>{activePane.displayName}</span>
-					{activePane.steps.length > 0 && (
-						<span className={styles.chatHeaderSteps}>
-							{activePane.steps.length} шагов
-						</span>
-					)}
-					{activePane.model && (
-						<span className={styles.chatHeaderModel}>{activePane.model}</span>
-					)}
-					{activePane.contextTokens != null && activePane.contextTokens > 0 && (
-						<span className={styles.chatHeaderTokens} title="Заполненность контекста">
-							{activePane.contextTokens.toLocaleString()} tk
-						</span>
-					)}
-					{!activePane.id.startsWith("history:") && (
-						<>
-							{activePane.status === "running" && (
-								<button
-									className={styles.pauseRunBtn}
-									onClick={() => void pauseSelectedRun(activePane.id)}
-									title="Приостановить запуск"
-								>
-									Пауза
-								</button>
-							)}
-							{activePane.status === "paused" && (
-								<button
-									className={styles.resumeRunBtn}
-									onClick={() => void resumeSelectedRun(activePane.id)}
-									title="Продолжить запуск"
-								>
-									Продолжить
-								</button>
-							)}
-							{(activePane.status === "running" ||
-								activePane.status === "paused") && (
-								<button
-									className={styles.stopRunBtn}
-									onClick={() => void cancelSelectedRun(activePane.id)}
-									title="Остановить текущий запуск"
-								>
-									Остановить
-								</button>
-							)}
-						</>
-					)}
-				</div>
-
-				<div className={styles.tabBar}>
-					<button
-						className={`${styles.tabBtn} ${activeTab === "log" ? styles.tabActive : ""}`}
-						onClick={() => setActiveTab("log")}
-					>
-						Лог
-					</button>
-					<button
-						className={`${styles.tabBtn} ${activeTab === "artifacts" ? styles.tabActive : ""}`}
-						onClick={() => setActiveTab("artifacts")}
-					>
-						Артефакты
-					</button>
-					<button
-						className={`${styles.tabBtn} ${activeTab === "timeline" ? styles.tabActive : ""}`}
-						onClick={() => setActiveTab("timeline")}
-					>
-						Timeline
-					</button>
-				</div>
-
-				{activeTab === "timeline" ? (
-					<TimelinePanel pane={activePane} />
-				) : activeTab === "log" && activePane.status === "idle" ? (
-					<div className={styles.chatEmpty}>
-						<div className={styles.chatEmptyIcon}>◍</div>
-						<div>Агент ещё не запускался</div>
-						<div style={{ fontSize: 12, opacity: 0.6 }}>
-							Дай директору задачу, и здесь появится лог
+				{activePane.status === "idle" ? (
+					<div className={styles.agentProfile}>
+						<div className={styles.profileHeader}>
+							<div>
+								<h2>{activePane.displayName}</h2>
+								<p>
+									{activePane.description ||
+										"Агент настроен, но еще не запускался."}
+								</p>
+							</div>
+						</div>
+						<div className={styles.profileGrid}>
+							<section>
+								<h3>Возможности</h3>
+								<div className={styles.profileTags}>
+									{(activePane.capabilities?.length
+										? activePane.capabilities
+										: ["ожидание задачи"]
+									).map((item) => (
+										<span key={item}>{item}</span>
+									))}
+								</div>
+							</section>
+							<section>
+								<h3>Ограничения</h3>
+								<ul>
+									{(activePane.limits?.length
+										? activePane.limits
+										: [
+												"Действует только через доступные инструменты",
+											]
+									).map((item) => (
+										<li key={item}>{item}</li>
+									))}
+								</ul>
+							</section>
 						</div>
 					</div>
-				) : activeTab === "log" ? (
-					<>
-						<AgentChat pane={activePane} />
-						<div className={styles.readonlyBar}>
-							Только просмотр — писать агентам нельзя
-						</div>
-					</>
 				) : (
-					<ArtifactsPanel runId={activePane.id} />
+					<div className={styles.logLayout}>
+						<div className={styles.logMain}>
+							<AgentChat pane={activePane} />
+							<div className={styles.readonlyBar}>
+								Только просмотр — писать агентам нельзя
+							</div>
+						</div>
+						<PlanSidebar pane={activePane} />
+					</div>
 				)}
 			</div>
 		</div>

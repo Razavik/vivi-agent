@@ -1,5 +1,7 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import styles from "./CrashesPage.module.css";
+import { fetchJson } from "../../utils/http";
 
 interface CrashSummary {
 	file: string;
@@ -19,36 +21,19 @@ function fmtTime(ts: number): string {
 }
 
 export function CrashesPage() {
-	const [reports, setReports] = useState<CrashSummary[]>([]);
 	const [selected, setSelected] = useState<CrashDetail | null>(null);
-	const [loading, setLoading] = useState(false);
-
-	const reload = useCallback(async () => {
-		try {
-			const res = await fetch("/api/crashes");
-			const data = await res.json();
-			setReports(data.crashes ?? []);
-		} catch {
-			// ignore
-		}
-	}, []);
-
-	useEffect(() => {
-		void reload();
-	}, [reload]);
-
-	const openReport = async (filename: string) => {
-		setLoading(true);
-		try {
-			const res = await fetch(`/api/crashes/${encodeURIComponent(filename)}`);
-			const data = await res.json();
-			setSelected(data);
-		} catch {
-			// ignore
-		} finally {
-			setLoading(false);
-		}
-	};
+	const { data } = useQuery({
+		queryKey: ["crashes"],
+		queryFn: () => fetchJson<{ crashes?: CrashSummary[] }>("/api/crashes", { crashes: [] }),
+	});
+	const reports = data?.crashes ?? [];
+	const openReport = useMutation({
+		mutationFn: (filename: string) =>
+			fetchJson<CrashDetail | null>(`/api/crashes/${encodeURIComponent(filename)}`, null),
+		onSuccess: (detail) => {
+			if (detail) setSelected(detail);
+		},
+	});
 
 	return (
 		<div className={styles.page}>
@@ -71,7 +56,7 @@ export function CrashesPage() {
 							<div
 								key={r.file}
 								className={`${styles.reportCard} ${selected?.file === r.file ? styles.reportCardSelected : ""}`}
-								onClick={() => void openReport(r.file)}
+								onClick={() => openReport.mutate(r.file)}
 							>
 								<div className={styles.reportHeader}>
 									<span className={styles.exType}>{r.exception_type}</span>
@@ -85,15 +70,15 @@ export function CrashesPage() {
 				</div>
 
 				<div className={styles.detail}>
-					{!selected && !loading && (
+					{!selected && !openReport.isPending && (
 						<div className={styles.detailEmpty}>
 							Выберите отчёт для просмотра
 						</div>
 					)}
-					{loading && (
+					{openReport.isPending && (
 						<div className={styles.detailEmpty}>Загрузка…</div>
 					)}
-					{selected && !loading && (
+					{selected && !openReport.isPending && (
 						<>
 							<div className={styles.detailHeader}>
 								<span className={styles.detailType}>{selected.exception_type}</span>
@@ -134,3 +119,4 @@ export function CrashesPage() {
 		</div>
 	);
 }
+

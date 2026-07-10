@@ -1,0 +1,396 @@
+.planBlock {
+	position: relative;
+	isolation: isolate;
+	margin: 4px 0;
+	padding: 18px 16px 16px;
+	border-radius: 22px;
+	overflow: hidden;
+	background:
+		linear-gradient(145deg, rgba(54, 47, 79, 0.92), rgba(18, 16, 28, 0.96)),
+		radial-gradient(circle at 12% 0%, rgba(122, 171, 255, 0.18), transparent 34%);
+	border: 1px solid rgba(132, 168, 255, 0.2);
+	box-shadow:
+		0 26px 58px rgba(0, 0, 0, 0.38),
+		inset 0 1px 0 rgba(255, 255, 255, 0.055);
+}
+
+.planBlock::before {
+	content: "";
+	position: absolute;
+	inset: 0;
+	z-index: -1;
+	background:
+		linear-gradient(90deg, rgba(126, 176, 255, 0.05) 1px, transparent 1px),
+		linear-gradient(180deg, rgba(126, 176, 255, 0.04) 1px, transparent 1px);
+	background-size: 34px 34px;
+	mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.7), transparent 74%);
+}
+
+.panelGlow {
+	position: absolute;
+	inset: -80px -60px auto auto;
+	width: 190px;
+	height: 190px;
+	border-radius: 50%;
+	background: rgba(192, 132, 252, 0.18);
+	filter: blur(42px);
+	z-index: -1;
+}
+
+.compact {
+	padding: 14px;
+	border-radius: 18px;
+}
+
+.planHeader {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 12px;
+	margin-bottom: 10px;
+}
+
+.planLabel {
+	font-size: 11px;
+	font-weight: 800;
+	text-transform: uppercase;
+	letter-spacing: 0.13em;
+	color: #8fbaff;
+	text-shadow: 0 0 18px rgba(126, 176, 255, 0.26);
+}
+
+.planSubtitle {
+	margin-top: 6px;
+	font-size: 12px;
+	line-height: 1.4;
+	color: rgba(214, 204, 234, 0.55);
+}
+
+.planMeter {
+	display: grid;
+	place-items: center;
+	width: 42px;
+	height: 42px;
+	border-radius: 14px;
+	font-family: var(--font-mono);
+	font-size: 11px;
+	font-weight: 700;
+	color: rgba(211, 220, 255, 0.84);
+	border: 1px solid rgba(144, 177, 255, 0.22);
+	background:
+		linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.025)),
+		rgba(17, 15, 28, 0.7);
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+	flex-shrink: 0;
+}
+
+.progressTrack {
+	position: relative;
+	height: 4px;
+	margin: 0 0 16px;
+	overflow: hidden;
+	border-radius: 999px;
+	background: rgba(255, 255, 255, 0.055);
+}
+
+.progressFill {
+	height: 100%;
+	border-radius: inherit;
+	background: linear-gradient(90deg, #7eb0ff, #c084fc 70%, #f0abfc);
+	box-shadow: 0 0 18px rgba(126, 176, 255, 0.42);
+	transition: width 0.35s ease;
+}
+
+.graph {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.graphRow {
+	display: grid;
+	grid-template-columns: 28px minmax(0, 1fr);
+	gap: 10px;
+	align-items: stretch;
+	animation: rowIn 0.38s ease both;
+}
+
+.rail {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	padding-top: 14px;
+}
+
+.nodeDot {
+	display: grid;
+	place-items: center;
+	width: 17px;
+	height: 17px;
+	border-radius: 50%;
+	color: rgba(255, 255, 255, 0.7);
+	border: 1px solid rgba(255, 255, 255, 0.14);
+	background: rgba(255, 255, 255, 0.08);
+	box-shadow:
+		0 0 0 4px rgba(255, 255, 255, 0.025),
+		0 8px 18px rgba(0, 0, 0, 0.32);
+	z-index: 1;
+}
+
+.nodeDot.pending {
+	color: rgba(180, 173, 196, 0.62);
+	background: linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.04));
+}
+
+.nodeDot.in_progress {
+	color: #07101f;
+	border-color: rgba(153, 197, 255, 0.82);
+	background: #9cc4ff;
+	box-shadow:
+		0 0 0 5px rgba(126, 176, 255, 0.12),
+		0 0 22px rgba(126, 176, 255, 0.64);
+}
+
+.nodeDot.in_progress svg {
+	animation: spin 1.1s linear infinite;
+}
+
+.nodeDot.completed {
+	color: #061510;
+	border-color: rgba(93, 255, 191, 0.5);
+	background: linear-gradient(180deg, #8fffd4, #36d69c);
+	box-shadow:
+		0 0 0 5px rgba(54, 214, 156, 0.1),
+		0 0 20px rgba(54, 214, 156, 0.32);
+}
+
+.nodeLine {
+	width: 2px;
+	flex: 1;
+	min-height: 44px;
+	margin-top: 7px;
+	border-radius: 999px;
+	background: linear-gradient(
+		180deg,
+		rgba(126, 176, 255, 0.42),
+		rgba(126, 176, 255, 0.08)
+	);
+}
+
+.completedLine {
+	background: linear-gradient(180deg, rgba(126, 176, 255, 0.8), rgba(54, 214, 156, 0.42));
+	box-shadow: 0 0 16px rgba(126, 176, 255, 0.22);
+}
+
+.nodeCard {
+	position: relative;
+	min-width: 0;
+	padding: 15px 15px 13px;
+	border-radius: 18px;
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	background:
+		linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.02)),
+		rgba(27, 24, 38, 0.74);
+	box-shadow:
+		inset 0 1px 0 rgba(255, 255, 255, 0.045),
+		0 10px 26px rgba(0, 0, 0, 0.2);
+	transition:
+		transform 0.2s ease,
+		border-color 0.2s ease,
+		background 0.2s ease;
+}
+
+.nodeCard::after {
+	content: "";
+	position: absolute;
+	inset: 1px;
+	border-radius: 17px;
+	pointer-events: none;
+	background: linear-gradient(135deg, rgba(126, 176, 255, 0.06), transparent 52%);
+	opacity: 0;
+	transition: opacity 0.2s ease;
+}
+
+.nodeCard:hover {
+	transform: translateY(-1px);
+	border-color: rgba(162, 190, 255, 0.28);
+}
+
+.nodeCard:hover::after {
+	opacity: 1;
+}
+
+.nodeCard.pending {
+	border-color: rgba(255, 255, 255, 0.07);
+	background:
+		linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.018)),
+		rgba(28, 25, 37, 0.66);
+}
+
+.nodeCard.in_progress {
+	border-color: rgba(126, 176, 255, 0.34);
+	background:
+		radial-gradient(circle at 0% 0%, rgba(126, 176, 255, 0.16), transparent 42%),
+		linear-gradient(180deg, rgba(126, 176, 255, 0.08), rgba(255, 255, 255, 0.024)),
+		rgba(30, 28, 45, 0.84);
+	box-shadow:
+		0 0 0 1px rgba(126, 176, 255, 0.06),
+		0 18px 34px rgba(31, 73, 139, 0.18);
+}
+
+.nodeCard.completed {
+	border-color: rgba(54, 214, 156, 0.22);
+	background:
+		radial-gradient(circle at 0% 0%, rgba(54, 214, 156, 0.12), transparent 40%),
+		rgba(23, 34, 35, 0.66);
+}
+
+.nodeTop {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+.nodeTitle {
+	min-width: 0;
+	font-size: 14px;
+	line-height: 1.48;
+	font-weight: 750;
+	color: #f7f3ff;
+	word-break: break-word;
+	text-wrap: pretty;
+}
+
+.statusPill {
+	font-family: var(--font-mono);
+	font-size: 9px;
+	font-weight: 800;
+	text-transform: uppercase;
+	letter-spacing: 0.1em;
+	border-radius: 999px;
+	padding: 4px 9px;
+	flex-shrink: 0;
+	border: 1px solid transparent;
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045);
+}
+
+.statusPill.pending {
+	color: rgba(210, 190, 218, 0.68);
+	background: rgba(255, 255, 255, 0.045);
+	border-color: rgba(255, 255, 255, 0.07);
+}
+
+.statusPill.in_progress {
+	color: #93bdff;
+	background: rgba(69, 119, 201, 0.18);
+	border-color: rgba(126, 176, 255, 0.2);
+}
+
+.statusPill.completed {
+	color: #70e9bb;
+	background: rgba(54, 214, 156, 0.1);
+	border-color: rgba(54, 214, 156, 0.18);
+}
+
+.nodeFooter {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	margin-top: 12px;
+	font-size: 11px;
+	line-height: 1.4;
+	color: rgba(210, 196, 224, 0.52);
+}
+
+.nodeId {
+	display: grid;
+	place-items: center;
+	min-width: 24px;
+	height: 24px;
+	padding: 0 7px;
+	font-family: var(--font-mono);
+	font-size: 10px;
+	color: rgba(210, 202, 225, 0.64);
+	background: rgba(255, 255, 255, 0.045);
+	border: 1px solid rgba(255, 255, 255, 0.07);
+	border-radius: 999px;
+	white-space: nowrap;
+}
+
+.nodeDetail {
+	text-align: right;
+}
+
+.compact .graph {
+	gap: 8px;
+}
+
+.compact .graphRow {
+	grid-template-columns: 24px minmax(0, 1fr);
+}
+
+.compact .nodeCard {
+	padding: 12px 13px;
+	border-radius: 15px;
+}
+
+.compact .nodeCard::after {
+	border-radius: 14px;
+}
+
+.compact .nodeTitle {
+	font-size: 13px;
+}
+
+.compact .planMeter {
+	width: 36px;
+	height: 36px;
+	border-radius: 12px;
+}
+
+@keyframes rowIn {
+	from {
+		opacity: 0;
+		transform: translateY(8px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+@keyframes spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+@media (max-width: 760px) {
+	.planBlock {
+		padding: 14px;
+		border-radius: 18px;
+	}
+
+	.planHeader {
+		align-items: center;
+	}
+
+	.nodeTop {
+		flex-direction: column;
+	}
+
+	.statusPill {
+		align-self: flex-start;
+	}
+
+	.nodeFooter {
+		flex-direction: column;
+		align-items: flex-start;
+	}
+
+	.nodeDetail {
+		text-align: left;
+	}
+}

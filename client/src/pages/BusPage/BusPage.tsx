@@ -1,5 +1,7 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
+import { useQuery } from "@tanstack/react-query";
 import styles from "./BusPage.module.css";
+import { fetchJson } from "../../utils/http";
 
 interface BusMessage {
 	msg_id: string;
@@ -11,12 +13,12 @@ interface BusMessage {
 }
 
 const TYPE_COLORS: Record<string, string> = {
-	run_started: "#10a37f",
-	run_finished: "#33d17a",
+	run_started: "#c084fc",
+	run_finished: "#a78bfa",
 	progress_update: "#7eb0ff",
-	question_to_director: "#f6d365",
+	question_to_operator: "#f6d365",
 	outbox_message: "#a78bfa",
-	dependency_ready: "#34d399",
+	dependency_ready: "#ec4899",
 	sub_agent_error: "#ef4444",
 	system_event: "#94a3b8",
 };
@@ -38,28 +40,18 @@ function fmtPayload(payload: Record<string, unknown>): string {
 }
 
 export function BusPage() {
-	const [messages, setMessages] = useState<BusMessage[]>([]);
 	const [filterType, setFilterType] = useState("");
 	const [filterRun, setFilterRun] = useState("");
 	const [selected, setSelected] = useState<BusMessage | null>(null);
 	const [autoScroll, setAutoScroll] = useState(true);
 	const bottomRef = useRef<HTMLDivElement>(null);
 
-	const reload = useCallback(async () => {
-		try {
-			const res = await fetch("/api/bus");
-			const data = await res.json();
-			setMessages((data.messages ?? []).slice().reverse());
-		} catch {
-			// ignore
-		}
-	}, []);
-
-	useEffect(() => {
-		void reload();
-		const timer = setInterval(() => void reload(), 2000);
-		return () => clearInterval(timer);
-	}, [reload]);
+	const { data } = useQuery({
+		queryKey: ["bus"],
+		queryFn: () => fetchJson<{ messages?: BusMessage[] }>("/api/bus", { messages: [] }),
+		refetchInterval: 2000,
+	});
+	const messages = (data?.messages ?? []).slice().reverse();
 
 	useEffect(() => {
 		if (autoScroll) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -132,9 +124,7 @@ export function BusPage() {
 									{msg.msg_type}
 								</span>
 								<span className={styles.msgSender}>{msg.sender || "—"}</span>
-								{msg.run_id && (
-									<span className={styles.msgRunId}>{msg.run_id.slice(0, 8)}</span>
-								)}
+								{msg.run_id && <span className={styles.msgRunId}>{msg.run_id.slice(0, 8)}</span>}
 							</div>
 						))
 					)}
@@ -180,3 +170,4 @@ export function BusPage() {
 		</div>
 	);
 }
+

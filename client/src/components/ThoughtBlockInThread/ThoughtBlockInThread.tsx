@@ -1,4 +1,4 @@
-import { useState, useEffect, type RefObject } from "react";
+import { useState, type RefObject } from "react";
 import styles from "./ThoughtBlockInThread.module.css";
 
 interface ThoughtBlockInThreadProps {
@@ -15,15 +15,6 @@ export function ThoughtBlockInThread({
 	textRef,
 }: ThoughtBlockInThreadProps) {
 	const [isOpen, setIsOpen] = useState(true);
-
-	// Для не-стриминговых блоков — обновляем через React
-	// Для стриминговых — текст пишется напрямую в DOM через textRef из useAgent
-	useEffect(() => {
-		if (streaming) {
-			// При монтировании стримингового блока — автоматически раскрываем
-			setIsOpen(true);
-		}
-	}, [streaming]);
 
 	return (
 		<div className={styles.messageThoughtWrap}>
@@ -54,3 +45,4 @@ export function ThoughtBlockInThread({
 		</div>
 	);
 }
+

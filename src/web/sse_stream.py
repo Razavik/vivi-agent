@@ -3,12 +3,12 @@ from __future__ import annotations
 import json
 import queue
 import threading
+import traceback
 from http import HTTPStatus
 from typing import Any, Callable
 
 from src.app_factory import build_runtime
 from src.agent.events import normalize_event
-from src.infra.agent_ops import AgentOpsService
 from src.infra.logging import SessionLogger
 from src.web.confirmation import ConfirmationManager
 from src.web.context import ServerContext
@@ -20,7 +20,7 @@ class SSEStream:
     def __init__(self, ctx: ServerContext, confirmation: ConfirmationManager) -> None:
         self.ctx = ctx
         self.confirmation = confirmation
-        # Регистрируем себя как провайдер автономных запусков директора
+        # Регистрируем себя как провайдер автономных запусков оператора
         ctx.set_autonomous_run_callback(self._run_autonomous)
 
     def run_and_stream(
@@ -34,7 +34,7 @@ class SSEStream:
         return self._run_agent(task, chat_history, write_callback, images=images)
 
     def _run_autonomous(self, message: str) -> None:
-        """Автономный запуск директора без подключённого клиента (triggered by supervisor)."""
+        """Автономный запуск оператора без подключённого клиента (triggered by supervisor)."""
         def _noop(_data: bytes) -> None:
             pass
 
@@ -43,7 +43,7 @@ class SSEStream:
             args=(message, [], _noop),
             kwargs={"autonomous": True},
             daemon=True,
-            name="director-autonomous",
+            name="operator-autonomous",
         ).start()
 
     def _run_agent(
@@ -58,33 +58,8 @@ class SSEStream:
         import time as _time
 
         logger = SessionLogger(self.ctx.settings.log_dir)
-        ops = AgentOpsService(self.ctx.settings, self.ctx)
-        preflight = ops.preflight(task)
         event_queue: queue.Queue[dict[str, Any] | None] = queue.Queue()
         result_holder: dict[str, Any] = {}
-
-        if not preflight.get("allowed", False):
-            result_holder["error"] = preflight.get("summary", "Preflight blocked run")
-            result_holder["preflight"] = preflight
-            if not autonomous:
-                event = {
-                    "event": "agent_error",
-                    "payload": {"message": result_holder["error"], "preflight": preflight},
-                }
-                write_callback(f"data: {json.dumps(event, ensure_ascii=False)}\n\n".encode("utf-8"))
-                final_event = {"event": "__final__", "payload": result_holder}
-                write_callback(f"data: {json.dumps(final_event, ensure_ascii=False)}\n\n".encode("utf-8"))
-            return result_holder
-
-        if preflight.get("warnings") and not autonomous:
-            event = {
-                "event": "agent_warning",
-                "payload": {
-                    "message": f"Preflight: предупреждений {len(preflight.get('warnings', []))}. Запуск продолжается.",
-                    "preflight": preflight,
-                },
-            }
-            write_callback(f"data: {json.dumps(event, ensure_ascii=False)}\n\n".encode("utf-8"))
 
         def event_sink(event: str, data: object) -> None:
             normalized = normalize_event(event, data)
@@ -92,7 +67,9 @@ class SSEStream:
             self.ctx.handle_run_event(event, payload)
             if event == "confirmation_requested":
                 payload = self.confirmation.create_request(payload)
-            event_queue.put({"event": normalized.event, "payload": payload, "timestamp": normalized.timestamp})
+            event_record = {"event": normalized.event, "payload": payload, "timestamp": normalized.timestamp}
+            event_record = self.ctx.publish_operator_event(event_record)
+            event_queue.put(event_record)
 
         def confirm_callback(message: str) -> bool:
             if autonomous:
@@ -100,6 +77,7 @@ class SSEStream:
             return self.confirmation.wait_confirmation()
 
         def run_agent() -> None:
+            runtime = None
             try:
                 runtime, registry, _ = build_runtime(
                     confirm_callback,
@@ -117,9 +95,30 @@ class SSEStream:
                 result_holder["autonomous"] = autonomous
             except Exception as e:
                 result_holder["error"] = str(e)
+                result_holder["traceback"] = traceback.format_exc()
+                try:
+                    logger.write("runtime_error", {
+                        "error": str(e),
+                        "traceback": result_holder["traceback"],
+                    })
+                except Exception:
+                    pass
+                try:
+                    if runtime is not None:
+                        runtime._persist_interrupted_snapshot()
+                except Exception:
+                    pass
+                try:
+                    event_record = self.ctx.publish_operator_event({
+                        "event": "agent_error",
+                        "payload": {"message": f"Runtime error: {e}"},
+                    })
+                    event_queue.put(event_record)
+                except Exception:
+                    pass
             finally:
                 self.ctx.clear_confirmation()
-                self.ctx.set_runtime(None)
+                self.ctx.clear_runtime(runtime)
                 event_queue.put(None)
 
         agent_thread = threading.Thread(target=run_agent)
@@ -136,7 +135,7 @@ class SSEStream:
                 try:
                     write_callback(f"data: {data}\n\n".encode("utf-8"))
                     _time.sleep(0.01)
-                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+                except Exception:
                     pass
             except queue.Empty:
                 if not agent_thread.is_alive():
@@ -148,17 +147,13 @@ class SSEStream:
         if agent_thread.is_alive():
             result_holder["error"] = "Агент не ответил в течение 180 секунд"
 
-        try:
-            result_holder["post_run_review"] = ops.create_post_run_review(task, result_holder, preflight)
-        except Exception as exc:
-            result_holder["post_run_review_error"] = str(exc)
-
         if not autonomous:
             final_event = {"event": "__final__", "payload": result_holder}
+            final_event = self.ctx.publish_operator_event(final_event)
             data = json.dumps(final_event, ensure_ascii=False)
             try:
                 write_callback(f"data: {data}\n\n".encode("utf-8"))
-            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+            except Exception:
                 pass
 
         return result_holder

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import type { ChatEvent, ConfirmationRequest, SubAgentPane } from "../types";
 
 const AGENT_DISPLAY_NAMES: Record<string, string> = {
@@ -7,13 +8,35 @@ const AGENT_DISPLAY_NAMES: Record<string, string> = {
 	web: "Веб",
 };
 
+function normalizeContent(value: unknown): string {
+	return String(value ?? "").trim();
+}
+
+function appendAssistantMessageOnce(
+	prev: ChatEvent[],
+	content: string,
+): ChatEvent[] {
+	const normalized = normalizeContent(content);
+	const lastMessage = [...prev]
+		.reverse()
+		.find(
+			(event) => event.type === "message" && event.role === "assistant",
+		);
+	if (lastMessage && normalizeContent(lastMessage.content) === normalized) {
+		return prev;
+	}
+	return [...prev, { type: "message", role: "assistant", content }];
+}
+
 export interface SseSetters {
 	setEvents: React.Dispatch<React.SetStateAction<ChatEvent[]>>;
 	setLiveThought: React.Dispatch<React.SetStateAction<string>>;
 	setLiveStatus: React.Dispatch<React.SetStateAction<string>>;
 	setCurrentAnswer: React.Dispatch<React.SetStateAction<string>>;
 	setIsRunning: React.Dispatch<React.SetStateAction<boolean>>;
-	setConfirmationRequest: React.Dispatch<React.SetStateAction<ConfirmationRequest | null>>;
+	setConfirmationRequest: React.Dispatch<
+		React.SetStateAction<ConfirmationRequest | null>
+	>;
 	setContextTokens: React.Dispatch<React.SetStateAction<number>>;
 	setSubAgentPanes: React.Dispatch<React.SetStateAction<SubAgentPane[]>>;
 	updatePane: (id: string, patch: Partial<SubAgentPane>) => void;
@@ -55,8 +78,6 @@ export function parseSseBuffer(buffer: string): ParseResult {
 
 export function handleSseEvent(event: any, s: SseSetters): void {
 	const p = event.payload;
-	console.log("[SSE handler]", event.event);
-
 	switch (event.event) {
 		case "thought_stream":
 			if (s.isSessionFinished()) break;
@@ -77,7 +98,13 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 						step,
 					});
 				if (action && action !== "finish_task") {
-					next.push({ type: "tool_use", role: "assistant", action, result: args, step });
+					next.push({
+						type: "tool_use",
+						role: "assistant",
+						action,
+						result: args,
+						step,
+					});
 					s.setLiveStatus(`Агент использует: ${action}`);
 				}
 				return next;
@@ -87,13 +114,49 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 
 		case "assistant_stream":
 			if (s.isSessionFinished()) break;
-			s.setCurrentAnswer(p?.content || "");
+			{
+				const content = String(p?.content || "");
+				const normalized = normalizeContent(content);
+				s.setEvents((prev) => {
+					const lastMessageIdx = prev.findLastIndex(
+						(event) =>
+							event.type === "message" &&
+							event.role === "assistant" &&
+							Boolean(event.content),
+					);
+					if (lastMessageIdx === -1 || !normalized) {
+						s.setCurrentAnswer(content);
+						return prev;
+					}
+					const last = prev[lastMessageIdx];
+					const lastContent = String(last.content || "");
+					if (
+						normalized.startsWith(normalizeContent(lastContent)) ||
+						normalizeContent(lastContent).startsWith(normalized)
+					) {
+						const updated = [...prev];
+						updated[lastMessageIdx] = {
+							...last,
+							content:
+								content.length >= lastContent.length
+									? content
+									: lastContent,
+						};
+						s.setCurrentAnswer("");
+						return updated;
+					}
+					s.setCurrentAnswer(content);
+					return prev;
+				});
+			}
 			s.setLiveStatus("Формируется ответ...");
 			break;
 
 		case "sub_agent_plan_updated":
 			if (p?.run_id) {
-				s.updatePane(p.run_id, { plan: Array.isArray(p.plan) ? p.plan : [] });
+				s.updatePane(p.run_id, {
+					plan: Array.isArray(p.plan) ? p.plan : [],
+				});
 			}
 			break;
 
@@ -102,7 +165,10 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 			if (action !== "finish_task") {
 				s.setEvents((prev) => {
 					const i = prev.findLastIndex(
-						(e) => e.type === "tool_use" && e.action === action && e.step === step,
+						(e) =>
+							e.type === "tool_use" &&
+							e.action === action &&
+							e.step === step,
 					);
 					if (i !== -1) {
 						const updated = [...prev];
@@ -118,7 +184,14 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 					}
 					return [
 						...prev,
-						{ type: "tool_result", role: "assistant", action, result, success, step },
+						{
+							type: "tool_result",
+							role: "assistant",
+							action,
+							result,
+							success,
+							step,
+						},
 					];
 				});
 				s.setLiveStatus(`Выполнено: ${action}`);
@@ -144,7 +217,9 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 		case "agent_error": {
 			const { step, message } = p;
 			s.setEvents((prev) => {
-				const i = prev.findLastIndex((e) => e.type === "tool_use" && e.step === step);
+				const i = prev.findLastIndex(
+					(e) => e.type === "tool_use" && e.step === step,
+				);
 				if (i !== -1) {
 					const updated = [...prev];
 					updated[i] = {
@@ -159,10 +234,24 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 				}
 				return [
 					...prev,
-					{ type: "message", role: "assistant", content: `Ошибка: ${message}` },
+					{
+						type: "message",
+						role: "assistant",
+						content: `Ошибка: ${message}`,
+					},
 				];
 			});
 			s.setLiveStatus("Произошла ошибка");
+			break;
+		}
+
+		case "cancelled": {
+			s.setSessionFinished(true);
+			s.setLiveThought("");
+			s.setCurrentAnswer("");
+			s.setConfirmationRequest(null);
+			s.setIsRunning(false);
+			s.setLiveStatus("");
 			break;
 		}
 
@@ -171,10 +260,9 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 			if (summary) {
 				s.setSessionFinished(true);
 				s.setLiveThought("");
-				s.setEvents((prev) => [
-					...prev,
-					{ type: "message", role: "assistant", content: summary },
-				]);
+				s.setEvents((prev) =>
+					appendAssistantMessageOnce(prev, summary),
+				);
 				s.setCurrentAnswer("");
 				s.setLiveStatus("");
 				s.setIsRunning(false);
@@ -216,6 +304,9 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 			break;
 
 		case "__final__":
+			if (!p?.summary && !p?.error) {
+				break;
+			}
 			s.setSessionFinished(true);
 			s.setLiveThought("");
 			s.setCurrentAnswer("");
@@ -225,18 +316,15 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 				s.setLiveStatus("");
 				s.setEvents((prev) => [
 					...prev,
-					{ type: "message", role: "assistant", content: `⚠️ Ошибка: ${p.error}` },
+					{
+						type: "message",
+						role: "assistant",
+						content: `⚠️ Ошибка: ${p.error}`,
+					},
 				]);
 			} else {
 				s.setLiveStatus("");
 			}
-			break;
-
-		case "intermediate_message":
-			s.setEvents((prev) => [
-				...prev,
-				{ type: "message", role: p?.role || "assistant", content: p?.content || "" },
-			]);
 			break;
 
 		case "context_tokens":
@@ -295,7 +383,9 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 			s.setSubAgentPanes((prev) =>
 				prev.map((pane) => {
 					if (pane.id !== run_id) return pane;
-					const i = pane.steps.findIndex((item) => item.step === step);
+					const i = pane.steps.findIndex(
+						(item) => item.step === step,
+					);
 					const newStep = { step, thought, action, args };
 					const steps =
 						i !== -1
@@ -348,9 +438,9 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 		}
 
 		case "sub_agent_finished": {
-			const { run_id, result, success, cancelled } = p;
+			const { run_id, result, summary, success, cancelled } = p;
 			if (!run_id) break;
-			const resultStr = String(result ?? "");
+			const resultStr = String(result ?? summary ?? "");
 			s.setSubAgentPanes((prev) =>
 				prev.map((pane) => {
 					if (pane.id !== run_id) return pane;
@@ -363,7 +453,11 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 					};
 					return {
 						...pane,
-						status: cancelled ? "cancelled" : success ? "done" : "error",
+						status: cancelled
+							? "cancelled"
+							: success
+								? "done"
+								: "error",
 						result: resultStr,
 						errorMessage:
 							!success && !cancelled
@@ -400,7 +494,11 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 						result: { error: errMsg },
 						success: false,
 					};
-					return { ...pane, errorMessage: errMsg, steps: [...pane.steps, errStep] };
+					return {
+						...pane,
+						errorMessage: errMsg,
+						steps: [...pane.steps, errStep],
+					};
 				}),
 			);
 			break;
@@ -433,7 +531,7 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 						if (pane.id !== p.run_id) return pane;
 						const qStep = {
 							step: pane.steps.length + 1,
-							action: "ask_director_question",
+							action: "ask_operator_question",
 							result: { question: p.question },
 							success: true,
 						};
@@ -451,7 +549,7 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 						if (pane.id !== p.run_id) return pane;
 						const aStep = {
 							step: pane.steps.length + 1,
-							action: "director_answer",
+							action: "operator_answer",
 							result: { answer: p.answer },
 							success: true,
 						};

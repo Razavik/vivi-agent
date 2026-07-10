@@ -16,7 +16,13 @@ from src.safety.policy import SafetyPolicy
 from src.safety.run_policy import RunPolicy
 from src.safety.validator import ActionValidator
 from src.tools.confirmation_tools import finish_task
-from src.tools.registry import ToolRegistry, ToolSpec
+from src.tools.registry import ToolRegistry, ToolSpec, result_indicates_failure
+
+
+_MIN_WAIT_SECONDS = 1.0
+_MAX_WAIT_SECONDS = 120.0
+_DEFAULT_WAIT_SECONDS = 20.0
+_WAIT_POLL_INTERVAL = 1.0
 
 
 class SubAgent:
@@ -32,6 +38,8 @@ class SubAgent:
         memory_store: ChatMemoryStore,
         max_steps: int = 50,
         user_name: str = "Пользователь",
+        prompt_vars: dict[str, str] | None = None,
+        server_context: Any | None = None,
     ) -> None:
         self.name = name
         self.display_name = display_name
@@ -41,21 +49,38 @@ class SubAgent:
         self.memory_store = memory_store
         self.max_steps = max_steps
         self.user_name = user_name
+        # Дополнительные плейсхолдеры для системного промпта конкретного агента
+        # (например {tg_username}/{tg_display_name} у telegram) — подставляются
+        # поверх {user_name} при построении system_prompt в run().
+        self.prompt_vars = prompt_vars or {}
+        # Нужен для сохранения картинок инструментов как артефактов (см.
+        # src.infra.image_artifacts) — без него картинки остаются видны только
+        # модели (через images в LLM-запросе), но не превращаются в URL для
+        # прямой отдачи оператору/пользователю.
+        self.server_context = server_context
 
-        # Реестр собственных инструментов (без ask_director — добавляется при run())
+        # Реестр собственных инструментов (без ask_operator — добавляется при run())
         self._base_tools = list(tools)
 
         self.validator: ActionValidator | None = None
         self.policy = SafetyPolicy()
 
-    def _build_registry(self, ask_director: Callable[[str], str] | None) -> ToolRegistry:
-        """Собирает реестр инструментов с опциональным ask_director."""
+    def _build_registry(
+        self,
+        ask_operator: Callable[[str], str] | None,
+        controller: RunController | None = None,
+    ) -> ToolRegistry:
+        """Собирает реестр инструментов с опциональным ask_operator."""
         registry = ToolRegistry()
         for spec in self._base_tools:
             registry.register(spec)
         registry.register(ToolSpec(
             "finish_task",
-            "Завершить задачу и вернуть структурированный результат",
+            (
+                "Завершить задачу и вернуть структурированный результат. attach_images=true "
+                "встроит в summary картинки, увиденные за этот запуск (markdown-изображения), "
+                "чтобы оператор мог напрямую передать их пользователю."
+            ),
             0,
             finish_task,
             {
@@ -67,23 +92,62 @@ class SubAgent:
                 "risks": "list?",
                 "needs_user_input": "bool?",
                 "question": "str?",
+                "attach_images": "bool?",
             },
         ))
-        if ask_director is not None:
-            def _ask_director_handler(args: dict[str, Any]) -> dict[str, Any]:
+        registry.register(ToolSpec(
+            "wait",
+            (
+                "Приостановить свою работу на seconds секунд (1-120, по умолчанию 20), чтобы выждать "
+                "внешнее событие — например, ответ собеседника в переписке. Не завершает задачу. "
+                "Для многошагового ожидания вызывай wait несколько раз подряд, проверяя результат "
+                "между вызовами (например get_messages для Telegram)."
+            ),
+            0,
+            self._make_wait_handler(controller),
+            {"seconds": "float?", "reason": "str?"},
+        ))
+        if ask_operator is not None:
+            def _ask_operator_handler(args: dict[str, Any]) -> dict[str, Any]:
                 question = str(args.get("question", ""))
                 if not question:
                     raise ToolExecutionError("Параметр question обязателен")
-                answer = ask_director(question)
+                answer = ask_operator(question)
                 return {"answer": answer}
             registry.register(ToolSpec(
-                "ask_director",
-                "Задать вопрос директору, если нужна уточняющая информация для выполнения задачи",
+                "ask_operator",
+                "Задать вопрос оператору, если нужна уточняющая информация для выполнения задачи",
                 0,
-                _ask_director_handler,
+                _ask_operator_handler,
                 {"question": "str"},
             ))
         return registry
+
+    def _make_wait_handler(self, controller: RunController | None) -> Callable[[dict[str, Any]], dict[str, Any]]:
+        def _wait_handler(args: dict[str, Any]) -> dict[str, Any]:
+            try:
+                requested = float(args.get("seconds", _DEFAULT_WAIT_SECONDS))
+            except (TypeError, ValueError):
+                requested = _DEFAULT_WAIT_SECONDS
+            seconds = max(_MIN_WAIT_SECONDS, min(requested, _MAX_WAIT_SECONDS))
+            reason = str(args.get("reason", "")).strip()
+
+            deadline = time.monotonic() + seconds
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                if controller is not None and controller.is_cancelled():
+                    return {
+                        "waited_seconds": round(seconds - remaining, 1),
+                        "interrupted": True,
+                        "reason": reason,
+                    }
+                time.sleep(min(_WAIT_POLL_INTERVAL, remaining))
+
+            return {"waited_seconds": seconds, "interrupted": False, "reason": reason}
+
+        return _wait_handler
 
     def _load_prompt(self) -> str:
         path = Path(self.prompt_path)
@@ -100,7 +164,7 @@ class SubAgent:
         task: str,
         run_id: str,
         event_sink: Callable[[str, object], None] | None = None,
-        ask_director: Callable[[str], str] | None = None,
+        ask_operator: Callable[[str], str] | None = None,
         controller: RunController | None = None,
         images: list[str] | None = None,
         run_policy: RunPolicy | None = None,
@@ -140,15 +204,15 @@ class SubAgent:
             "model": self.client.model,
         })
 
-        wrapped_ask_director: Callable[[str], str] | None = None
-        if ask_director is not None:
-            def _wrapped_ask_director(question: str) -> str:
+        wrapped_ask_operator: Callable[[str], str] | None = None
+        if ask_operator is not None:
+            def _wrapped_ask_operator(question: str) -> str:
                 self._emit(event_sink, "sub_agent_question", {
                     "agent": self.name,
                     "run_id": run_id,
                     "question": question,
                 })
-                answer = ask_director(question)
+                answer = ask_operator(question)
                 self._emit(event_sink, "sub_agent_answer", {
                     "agent": self.name,
                     "run_id": run_id,
@@ -157,16 +221,34 @@ class SubAgent:
                 })
                 return answer
 
-            wrapped_ask_director = _wrapped_ask_director
+            wrapped_ask_operator = _wrapped_ask_operator
 
-        registry = self._build_registry(wrapped_ask_director)
+        if controller is not None:
+            # Без этого cancel() саб-агента только выставляет флаг, но не прерывает
+            # уже идущий блокирующий HTTP-запрос к LLM — сессия зависает до его
+            # естественного завершения (или навсегда, если Ollama не отвечает).
+            controller.register_cancel_callback(self.client.cancel_active_request)
+
+        registry = self._build_registry(wrapped_ask_operator, controller)
         validator = ActionValidator(registry)
 
         system_prompt = self._load_prompt()
         system_prompt = system_prompt.replace("{user_name}", self.user_name)
+        for key, value in self.prompt_vars.items():
+            system_prompt = system_prompt.replace("{" + key + "}", value)
 
         last_actions: list[tuple[str, str]] = []  # (action, args_repr)
         policy = run_policy or RunPolicy()  # по умолчанию — standard без квот
+        # Изображения, переданные оператором при делегировании (images) плюс те, что
+        # вернут инструменты по ходу выполнения (_type=="image") — накапливаются здесь
+        # и отправляются в следующий LLM-запрос, затем список очищается (не дублируем
+        # одну и ту же картинку в каждом последующем сообщении).
+        extracted_images: list[str] = list(images) if images else []
+        # Все картинки, увиденные за этот run (сохранённые как артефакты, URL) —
+        # не очищается между шагами (в отличие от extracted_images), чтобы
+        # finish_task(attach_images=true) мог встроить их в итоговый summary,
+        # а оператор — увидеть полный список через delegate_task-результат.
+        image_urls: list[str] = []
 
         for step_number in range(1, self.max_steps + 1):
             try:
@@ -198,7 +280,10 @@ class SubAgent:
                             self._emit(event_sink, "sub_agent_message_received", {
                                 "agent": self.name, "run_id": run_id, "message": content,
                             })
-                messages = self._build_messages(system_prompt, state, registry, images=images if step_number == 1 else None)
+                images_for_step = extracted_images if extracted_images else None
+                messages = self._build_messages(system_prompt, state, registry, images=images_for_step)
+                if images_for_step:
+                    extracted_images = []
                 from src.llm.prompt_builder import count_tokens
                 token_count = count_tokens(messages)
                 self._emit(event_sink, "context_tokens", {"agent": self.name, "run_id": run_id, "count": token_count})
@@ -265,12 +350,12 @@ class SubAgent:
                     last_actions.clear()
                     continue
 
-                result = self._execute_step(current_step, step_number, state, event_sink, validator, run_id, policy)
+                result = self._execute_step(current_step, step_number, state, event_sink, validator, run_id, policy, extracted_images, image_urls)
 
                 if result is not None:
                     state.add_chat_message("assistant", result, plan=state.plan)
                     self.memory_store.append_session(state.chat_history, state.observations, self.client.model)
-                    final_payload = self._build_final_payload(run_id, result, step_number, state, success=True)
+                    final_payload = self._build_final_payload(run_id, result, step_number, state, success=True, image_urls=image_urls)
                     self._emit(event_sink, "sub_agent_finished", {
                         "agent": self.name,
                         "run_id": run_id,
@@ -283,6 +368,9 @@ class SubAgent:
                 policy_msg = f"Агент {self.display_name} остановлен политикой: {exc}"
                 self._emit(event_sink, "sub_agent_policy_violation", {
                     "agent": self.name, "run_id": run_id, "message": str(exc), **policy.stats()
+                })
+                self._emit(event_sink, "sub_agent_error", {
+                    "agent": self.name, "run_id": run_id, "step": step_number, "message": policy_msg
                 })
                 state.add_chat_message("assistant", policy_msg, plan=state.plan)
                 self.memory_store.append_session(state.chat_history, state.observations, self.client.model)
@@ -321,6 +409,9 @@ class SubAgent:
         # Лимит шагов
         limit_msg = f"Агент {self.display_name} достиг лимита шагов ({self.max_steps})"
         self.memory_store.append_session(state.chat_history, state.observations, self.client.model)
+        self._emit(event_sink, "sub_agent_error", {
+            "agent": self.name, "run_id": run_id, "step": self.max_steps, "message": limit_msg
+        })
         self._emit(event_sink, "sub_agent_finished", {
             "agent": self.name, "run_id": run_id, "result": limit_msg, "success": False
         })
@@ -334,19 +425,20 @@ class SubAgent:
         state: SessionState,
         *,
         success: bool,
+        image_urls: list[str] | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "run_id": run_id,
             "agent_name": self.name,
             "success": success,
             "status": "done" if success else "failed",
-            "result": summary,
             "summary": summary,
             "steps": steps,
             "changed_files": [],
             "created_artifacts": [],
             "verification": [],
             "risks": [],
+            "image_urls": list(image_urls) if image_urls else [],
         }
         for observation in reversed(state.observations):
             if observation.action != "finish_task" or not isinstance(observation.result, dict):
@@ -395,6 +487,8 @@ class SubAgent:
         validator: ActionValidator,
         run_id: str,
         run_policy: RunPolicy | None = None,
+        extracted_images: list[str] | None = None,
+        image_urls: list[str] | None = None,
     ) -> str | None:
         tool = validator.validate(step)
         self.policy.enforce(step, tool)
@@ -416,15 +510,76 @@ class SubAgent:
         except Exception as exc:
             raise ToolExecutionError(f"Сбой инструмента {tool.name}: {exc}") from exc
 
+        # Инструмент мог вернуть ошибку словарём вместо исключения — не выдаём это
+        # за успешный шаг, иначе ошибка не видна ни агенту, ни на странице саб-агента.
+        success = not result_indicates_failure(result)
+
+        # Инструмент может вернуть изображение (_type=="image", конвенция screen_tools/
+        # telegram_tools) — извлекаем base64 в extracted_images для СЛЕДУЮЩЕГО шага LLM,
+        # иначе саб-агент физически не может "увидеть" картинку. В наблюдение и память
+        # кладём результат БЕЗ base64 (redacted), чтобы не раздувать chat_history/JSON.
+        # Дополнительно сохраняем картинку как артефакт и копим её URL в image_urls —
+        # это то, что finish_task(attach_images=true) встроит в итоговый ответ, и что
+        # получит оператор через результат delegate_task для передачи пользователю.
+        observation_result = result
+        if isinstance(result, dict) and result.get("_type") == "image" and isinstance(result.get("image"), str):
+            if extracted_images is not None:
+                extracted_images.append(result["image"])
+            image_url = None
+            if self.server_context is not None:
+                from src.infra.image_artifacts import save_image_artifact
+                image_url = save_image_artifact(
+                    self.server_context, run_id, result["image"], str(result.get("format", "image/png"))
+                )
+                if image_url and image_urls is not None:
+                    image_urls.append(image_url)
+            observation_result = dict(result)
+            observation_result.pop("image", None)
+            observation_result["image_attached"] = True
+            if image_url:
+                observation_result["image_url"] = image_url
+
         observation = Observation(
-            step=step_number, action=tool.name, result=result,
-            success=True, thought=step.thought
+            step=step_number, action=tool.name, result=observation_result,
+            success=success, thought=step.thought
         )
         state.add_observation(observation)
         self._emit(event_sink, "sub_agent_tool_result", {"agent": self.name, "run_id": run_id, **asdict(observation)})
+        if not success and tool.name != "finish_task":
+            error_text = ""
+            if isinstance(result, dict):
+                error_text = str(result.get("error") or "").strip()
+            self._emit(event_sink, "sub_agent_warning", {
+                "agent": self.name, "run_id": run_id, "step": step_number,
+                "message": f"Инструмент {tool.name} вернул ошибку: {error_text or 'см. результат'}",
+            })
+
+        # Обновляем статус задач в плане после успешного выполнения шага
+        if success and state.plan and step_number <= len(state.plan):
+            updated_plan = []
+            for i, item in enumerate(state.plan):
+                if i < step_number:
+                    # Предыдущие задачи - выполнены
+                    updated_plan.append(PlanItem(id=item.id, content=item.content, status="completed"))
+                elif i == step_number - 1:
+                    # Текущая задача - в работе (только что выполнена)
+                    updated_plan.append(PlanItem(id=item.id, content=item.content, status="completed"))
+                else:
+                    # Следующие задачи - в ожидании
+                    updated_plan.append(PlanItem(id=item.id, content=item.content, status="pending"))
+            state.set_plan(updated_plan)
+            self._emit(event_sink, "sub_agent_plan_updated", {
+                "agent": self.name,
+                "run_id": run_id,
+                "step": step_number,
+                "plan": state.compact_plan(),
+            })
 
         if tool.name == "finish_task" or step.done:
-            return str(result.get("summary") or step.summary or "Задача завершена")
+            summary = str(result.get("summary") or step.summary or "Задача завершена")
+            if tool.name == "finish_task" and result.get("attach_images") and image_urls:
+                summary = summary.rstrip() + "\n\n" + "\n".join(f"![image]({url})" for url in image_urls)
+            return summary
         return None
 
     def _emit(self, event_sink: Callable[[str, object], None] | None, event: str, payload: dict[str, Any]) -> None:

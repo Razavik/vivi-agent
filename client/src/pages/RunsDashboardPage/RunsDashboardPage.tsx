@@ -1,5 +1,7 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import styles from "./RunsDashboardPage.module.css";
+import { fetchJson } from "../../utils/http";
 
 interface AgentRun {
 	run_id: string;
@@ -51,29 +53,22 @@ function StatusBadge({ status }: { status: string }) {
 type FilterTab = "all" | "active" | "done";
 
 export function RunsDashboardPage() {
-	const [runs, setRuns] = useState<AgentRun[]>([]);
 	const [filter, setFilter] = useState<FilterTab>("all");
 	const [selected, setSelected] = useState<AgentRun | null>(null);
 	const [now, setNow] = useState(() => Date.now() / 1000);
-
-	const reload = useCallback(async () => {
-		try {
-			const res = await fetch("/api/runs");
-			const data = await res.json();
-			setRuns(data.runs ?? []);
-		} catch {
-			// ignore
-		}
-	}, []);
+	const { data } = useQuery({
+		queryKey: ["runs"],
+		queryFn: () => fetchJson<{ runs?: AgentRun[] }>("/api/runs", { runs: [] }),
+		refetchInterval: 2000,
+	});
+	const runs = data?.runs ?? [];
 
 	useEffect(() => {
-		void reload();
 		const timer = setInterval(() => {
-			void reload();
 			setNow(Date.now() / 1000);
 		}, 2000);
 		return () => clearInterval(timer);
-	}, [reload]);
+	}, []);
 
 	const activeStatuses = new Set(["queued", "running", "waiting_input", "paused", "cancelling"]);
 	const doneStatuses = new Set(["finished", "cancelled", "error", "interrupted"]);
@@ -236,3 +231,5 @@ export function RunsDashboardPage() {
 		</div>
 	);
 }
+
+

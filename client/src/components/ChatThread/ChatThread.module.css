@@ -44,6 +44,131 @@
 	border-radius: 3px;
 }
 
+.emptyState {
+	position: relative;
+	width: min(760px, calc(100% - 28px));
+	margin: auto;
+	padding: 46px 34px 34px;
+	border: 1px solid rgba(255, 255, 255, 0.09);
+	border-radius: 20px;
+	background:
+		linear-gradient(145deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.018)),
+		radial-gradient(circle at 18% 12%, rgba(192, 132, 252, 0.16), transparent 34%),
+		radial-gradient(circle at 88% 0%, rgba(236, 72, 153, 0.11), transparent 30%),
+		rgba(17, 13, 26, 0.86);
+	box-shadow:
+		0 24px 90px rgba(0, 0, 0, 0.36),
+		inset 0 1px 0 rgba(255, 255, 255, 0.05);
+	overflow: hidden;
+	text-align: center;
+}
+
+.emptyGlow {
+	position: absolute;
+	inset: auto 14% -58px;
+	height: 120px;
+	background: linear-gradient(90deg, rgba(192, 132, 252, 0), rgba(236, 72, 153, 0.2), rgba(192, 132, 252, 0));
+	filter: blur(28px);
+	pointer-events: none;
+}
+
+.emptyMark {
+	position: relative;
+	z-index: 1;
+	width: 62px;
+	height: 62px;
+	margin: 0 auto 18px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	border-radius: 18px;
+	color: #fff;
+	background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+	box-shadow: 0 18px 44px rgba(192, 132, 252, 0.28);
+}
+
+.emptyEyebrow {
+	position: relative;
+	z-index: 1;
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 12px;
+	color: var(--accent-soft);
+	font-size: 12px;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+}
+
+.emptyTitle {
+	position: relative;
+	z-index: 1;
+	max-width: 620px;
+	margin: 0 auto;
+	font-size: 30px;
+	line-height: 1.15;
+	font-weight: 800;
+	color: var(--text-main);
+	letter-spacing: 0;
+}
+
+.emptyText {
+	position: relative;
+	z-index: 1;
+	max-width: 590px;
+	margin: 16px auto 0;
+	color: var(--text-sub);
+	font-size: 15px;
+	line-height: 1.65;
+}
+
+.emptyCards {
+	position: relative;
+	z-index: 1;
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 12px;
+	margin-top: 28px;
+	text-align: left;
+}
+
+.emptyCard {
+	display: flex;
+	gap: 12px;
+	min-width: 0;
+	padding: 14px;
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	border-radius: 14px;
+	background: rgba(255, 255, 255, 0.035);
+}
+
+.emptyCardIcon {
+	flex: 0 0 auto;
+	width: 34px;
+	height: 34px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	border-radius: 10px;
+	color: var(--accent-soft);
+	background: rgba(192, 132, 252, 0.12);
+	border: 1px solid rgba(192, 132, 252, 0.18);
+}
+
+.emptyCardTitle {
+	font-size: 13px;
+	font-weight: 700;
+	color: var(--text-main);
+	margin-bottom: 4px;
+}
+
+.emptyCardText {
+	font-size: 12px;
+	line-height: 1.45;
+	color: var(--text-muted);
+}
+
 .assistantGroup {
 	width: 100%;
 	display: flex;
@@ -117,23 +242,23 @@
 .pathLink {
 	cursor: pointer;
 	color: var(--accent);
-	background: rgba(16, 163, 127, 0.1);
-	border-color: rgba(16, 163, 127, 0.25);
+	background: rgba(192, 132, 252, 0.12);
+	border-color: rgba(192, 132, 252, 0.26);
 	transition:
 		background 0.15s,
 		border-color 0.15s;
 }
 
 .pathLink:hover {
-	background: rgba(16, 163, 127, 0.2);
-	border-color: rgba(16, 163, 127, 0.45);
+	background: rgba(236, 72, 153, 0.18);
+	border-color: rgba(236, 72, 153, 0.34);
 }
 
 .codeBlock {
 	margin: 12px 0 0;
 	padding: 14px 16px;
 	overflow-x: auto;
-	background: #10141f;
+	background: #120f1d;
 	border: 1px solid rgba(255, 255, 255, 0.08);
 	border-radius: 14px;
 	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
@@ -145,7 +270,7 @@
 	font-size: 13px;
 	line-height: 1.65;
 	white-space: pre;
-	color: #d7e3ff;
+	color: #eadcff;
 }
 
 .blockCode {
@@ -221,7 +346,7 @@
 }
 
 .planItem.completed .planIcon {
-	color: #33d17a;
+	color: #a78bfa;
 }
 
 @keyframes planSpin {
@@ -248,3 +373,29 @@
 	text-decoration: line-through;
 	text-decoration-color: rgba(255, 255, 255, 0.2);
 }
+
+@media (max-width: 760px) {
+	.chatThread {
+		padding: 14px 0 170px;
+	}
+
+	.emptyState {
+		width: min(100% - 20px, 520px);
+		padding: 34px 20px 22px;
+		border-radius: 16px;
+	}
+
+	.emptyTitle {
+		font-size: 23px;
+	}
+
+	.emptyText {
+		font-size: 14px;
+	}
+
+	.emptyCards {
+		grid-template-columns: 1fr;
+	}
+}
+
+

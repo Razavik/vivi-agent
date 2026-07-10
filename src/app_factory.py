@@ -6,53 +6,102 @@ from src.agent.agent_registry import AgentRegistry
 from src.agent.runtime import AgentRuntime
 from src.agent.sub_agent import SubAgent
 from src.infra.chat_memory import ChatMemoryStore
-from src.infra.config import DIRECTOR_REQUIRED_TOOLS, Settings, get_settings, is_tool_enabled, _load_agents_config
+from src.infra.config import OPERATOR_REQUIRED_TOOLS, OPERATOR_RUN_TOOLS, Settings, get_settings, _load_agents_config, is_pc_control_mode
 from src.infra.logging import SessionLogger
 from src.llm.ollama_client import OllamaClient
 from src.safety.path_guard import PathGuard
 from src.safety.policy import SafetyPolicy
 from src.safety.validator import ActionValidator
 from src.tools.artifact_tools import ArtifactTools
+from src.tools.catalog import operator_tool_specs, unavailable_run_tools
 from src.tools.clipboard_tools import ClipboardTools
-from src.tools.confirmation_tools import finish_task, send_message
 from src.tools.delegate_tools import DelegateTools
 from src.tools.file_tools import FileTools
-from src.tools.memory_tools import MemoryTools
 from src.tools.notification_tools import NotificationTools
 from src.tools.process_tools import ProcessTools
 from src.tools.registry import ToolRegistry, ToolSpec
 from src.tools.run_tools import RunTools
+from src.tools.screen_tools import ScreenTools
+from src.tools.system_keyboard_tools import SystemKeyboardTools
+from src.tools.system_mouse_tools import SystemMouseTools
 from src.tools.system_tools import SystemTools
 from src.tools.telegram_tools import TelegramTools
 from src.tools.web_tools import WebTools
 
 
-def describe_all_tools(settings: Settings | None = None) -> list[dict[str, object]]:
-    """Возвращает описания всех инструментов всех агентов + директора для UI."""
-    settings = settings or get_settings()
+# Инструменты оркестрации, скрытые в режиме управления ПК (pc_control_mode).
+_OPERATOR_ORCHESTRATION_TOOLS = {
+    "delegate_task",
+    "delegate_parallel",
+    "get_agent_memory",
+    "view_runs",
+    "cancel_run",
+    "pause_run",
+    "resume_run",
+    "message_run",
+    "replace_task_run",
+    "reprioritize_run",
+    "get_world_state",
+    "wait_for_event",
+}
 
-    # Инструменты директора — описываем статически, без создания реального AgentRegistry
-    _director_specs = [
-        ToolSpec("delegate_task", "Делегировать задачу одному специализированному агенту", 0, lambda a: None, {"agent_name": "str", "task": "str"}),
-        ToolSpec("delegate_parallel", "Выполнить задачи у нескольких агентов одновременно (параллельно)", 0, lambda a: None, {"tasks": "list"}),
-        ToolSpec("send_message", "Отправить промежуточное сообщение пользователю в чат", 0, lambda a: None, {"message": "str"}),
-        ToolSpec("finish_task", "Завершить задачу и вернуть структурированный результат", 0, lambda a: None, {"summary": "str?", "status": "str?", "changed_files": "list?", "verification": "list?", "risks": "list?"}),
-        ToolSpec("get_agent_memory", "Просмотреть долгосрочную память саб-агента", 0, lambda a: None, {"agent": "str?", "limit": "int?"}),
-        ToolSpec("view_runs", "Показать активные запуски саб-агентов", 0, lambda a: None, {"limit": "int?"}),
-        ToolSpec("cancel_run", "Отменить активный запуск саб-агента по run_id", 0, lambda a: None, {"run_id": "str"}),
-        ToolSpec("pause_run", "Приостановить активный запуск саб-агента по run_id", 0, lambda a: None, {"run_id": "str"}),
-        ToolSpec("resume_run", "Возобновить приостановленный запуск саб-агента по run_id", 0, lambda a: None, {"run_id": "str"}),
-        ToolSpec("message_run", "Отправить сообщение в inbox активного запуска саб-агента по run_id", 0, lambda a: None, {"run_id": "str", "message": "str"}),
-        ToolSpec("replace_task_run", "Заменить задачу у активного запуска саб-агента по run_id", 0, lambda a: None, {"run_id": "str", "task": "str"}),
-        ToolSpec("reprioritize_run", "Изменить приоритет активного run", 0, lambda a: None, {"run_id": "str", "priority": "int"}),
-        ToolSpec("get_world_state", "Получить снимок состояния активных run, ожиданий и зависимостей", 0, lambda a: None, {}),
-        ToolSpec("wait_for_event", "Дождаться завершения или блокировки конкретного run", 0, lambda a: None, {"run_id": "str", "timeout_seconds": "float?"}),
-    ]
-    director_tools: list[dict[str, object]] = []
-    for spec in _director_specs:
+# Инструменты управления ПК/экраном, скрытые в режиме оркестратора (не pc_control_mode).
+_OPERATOR_PC_TOOLS = {
+    "take_screenshot",
+    "read_image",
+    "get_screen_info",
+    "system_mouse_move",
+    "system_mouse_nudge",
+    "system_mouse_click",
+    "system_mouse_double_click",
+    "system_mouse_scroll",
+    "system_mouse_drag",
+    "system_type_text",
+    "system_key_press",
+    "list_ui_elements",
+    "click_ui_element",
+    "focus_ui_element",
+}
+
+
+def describe_all_tools(settings: Settings | None = None) -> list[dict[str, object]]:
+    """Возвращает описания всех инструментов всех агентов + оператора для UI."""
+    settings = settings or get_settings()
+    pc_mode = is_pc_control_mode()
+    agents_config = _load_agents_config()
+
+    def enabled_tool_names(agent_name: str, required_names: set[str] | None = None) -> set[str] | None:
+        agent_cfg = agents_config.get(agent_name)
+        if not isinstance(agent_cfg, dict):
+            return None
+        raw_tools = agent_cfg.get("tools")
+        if not isinstance(raw_tools, list):
+            return None
+        names: set[str] = set(required_names or set())
+        for entry in raw_tools:
+            if isinstance(entry, dict):
+                name = str(entry.get("name", ""))
+                required = bool(entry.get("required", False)) or name in names
+                if name and (required or bool(entry.get("enabled", True))):
+                    names.add(name)
+            else:
+                names.add(str(entry))
+        return names
+
+    # Инструменты оператора — единый источник (src.tools.catalog), тот же список,
+    # что регистрируется в build_operator_registry. Обработчики здесь не вызываются,
+    # поэтому передаём заглушки. В UI показываем полный набор инструментов режима;
+    # ограничение по enabled применяется в runtime (build_operator_registry).
+    operator_tools: list[dict[str, object]] = []
+    _stub_delegate = DelegateTools(AgentRegistry())
+    for spec in operator_tool_specs(_stub_delegate, unavailable_run_tools()):
+        if pc_mode and spec.name in _OPERATOR_ORCHESTRATION_TOOLS:
+            continue
+        if (not pc_mode) and spec.name in (OPERATOR_RUN_TOOLS | _OPERATOR_PC_TOOLS):
+            continue
         d = spec.describe()
-        d["agent"] = "director"
-        director_tools.append(d)
+        d["agent"] = "operator"
+        operator_tools.append(d)
 
     # Инструменты сабагентов — строим напрямую без LLM-клиента
     path_guard = PathGuard(settings.allowed_roots)
@@ -63,6 +112,7 @@ def describe_all_tools(settings: Settings | None = None) -> list[dict[str, objec
     telegram_tools = TelegramTools(settings)
     clipboard_tools = ClipboardTools()
     notification_tools = NotificationTools()
+    keyboard_tools = SystemKeyboardTools()
 
     sub_agent_specs: list[tuple[str, list[ToolSpec]]] = [
         ("telegram", [
@@ -71,8 +121,10 @@ def describe_all_tools(settings: Settings | None = None) -> list[dict[str, objec
             ToolSpec("telegram_auth_code", "Подтвердить авторизацию кодом (и паролем 2FA)", 1, telegram_tools.telegram_auth_code, {"phone_number": "str", "code": "str", "password": "str?"}),
             ToolSpec("send_telegram_message", "Отправить сообщение в Telegram", 1, telegram_tools.send_message, {"recipient": "str", "message": "str"}),
             ToolSpec("get_chats", "Получить список чатов", 0, telegram_tools.get_chats, {"limit": "int?", "offset": "int?", "chat_type": "str?"}),
-            ToolSpec("get_messages", "Получить сообщения из чата", 0, telegram_tools.get_messages, {"chat_id": "str", "limit": "int?", "offset": "int?"}),
+            ToolSpec("get_messages", "Получить сообщения из чата, опционально только от одного отправителя (from_user). Каждое сообщение содержит media_type (photo/document/video/audio/None) — используй read_chat_image для media_type=photo", 0, telegram_tools.get_messages, {"chat_id": "str", "limit": "int?", "offset": "int?", "from_user": "str?"}),
+            ToolSpec("read_chat_image", "Скачать фото из конкретного сообщения чата (id из get_messages, media_type=photo) и увидеть его как изображение", 0, telegram_tools.read_chat_image, {"chat_id": "str", "message_id": "str"}),
             ToolSpec("get_contacts", "Получить список контактов", 0, telegram_tools.get_contacts, {"limit": "int?", "offset": "int?"}),
+            ToolSpec("get_own_telegram_profile", "Обновить и получить свой закреплённый профиль в Telegram (username, имя, id)", 0, telegram_tools.get_own_profile, {}),
         ]),
         ("file", [
             ToolSpec("read_text_file", "Прочитать текстовый файл целиком", 0, file_tools.read_text_file, {"path": "str"}),
@@ -107,7 +159,16 @@ def describe_all_tools(settings: Settings | None = None) -> list[dict[str, objec
             ToolSpec("get_clipboard", "Прочитать текущее содержимое буфера обмена", 0, clipboard_tools.get_clipboard, {}),
             ToolSpec("set_clipboard", "Записать текст в буфер обмена", 1, clipboard_tools.set_clipboard, {"text": "str"}),
             ToolSpec("show_notification", "Показать Windows-уведомление", 0, notification_tools.show_notification, {"title": "str?", "message": "str"}),
-            ToolSpec("take_screenshot", "Сделать скриншот экрана и сохранить PNG", 0, notification_tools.take_screenshot, {"path": "str?"}),
+            ToolSpec("get_screen_info", "Получить геометрию экранов, позицию курсора и активное окно Windows", 0, ScreenTools().get_screen_info, {}),
+            ToolSpec("take_screenshot", "Сделать скриншот экрана (весь экран или область x/y/width/height) и вернуть PNG", 0, ScreenTools().take_screenshot, {"x": "int?", "y": "int?", "width": "int?", "height": "int?"}),
+            ToolSpec("system_mouse_move", "Реально переместить системный курсор Windows по координатам экрана", 0, SystemMouseTools().move, {"x": "int", "y": "int"}),
+            ToolSpec("system_mouse_nudge", "Сместить системный курсор относительно текущей позиции и вернуть crop вокруг курсора", 0, SystemMouseTools().nudge, {"dx": "int", "dy": "int"}),
+            ToolSpec("system_mouse_click", "Выполнить системный клик Windows в текущей позиции курсора. Для позиционирования сначала используй system_mouse_move", 0, SystemMouseTools().click, {"button": "str?"}),
+            ToolSpec("system_mouse_double_click", "Выполнить двойной левый клик Windows в текущей позиции курсора", 0, SystemMouseTools().double_click, {}),
+            ToolSpec("system_mouse_scroll", "Прокрутить колесо мыши Windows. clicks < 0 вниз, clicks > 0 вверх", 0, SystemMouseTools().scroll, {"clicks": "int", "x": "int?", "y": "int?"}),
+            ToolSpec("system_mouse_drag", "Перетащить мышью от from_x/from_y до to_x/to_y", 0, SystemMouseTools().drag, {"from_x": "int", "from_y": "int", "to_x": "int", "to_y": "int", "duration_ms": "int?"}),
+            ToolSpec("system_type_text", "Ввести текст в активное поле через системную клавиатуру Windows", 0, keyboard_tools.type_text, {"text": "str", "interval_ms": "int?"}),
+            ToolSpec("system_key_press", "Нажать клавишу или сочетание клавиш Windows: enter, tab, esc, win+r, alt+tab, ctrl+shift+esc, printscreen, vk:0x5b.", 0, keyboard_tools.press_key, {"key": "str", "repeats": "int?"}),
         ]),
         ("web", [
             ToolSpec("fetch_url", "Прочитать содержимое веб-страницы (parse_text=true → чистый текст)", 0, web_tools.fetch_url, {"url": "str", "parse_text": "bool?"}),
@@ -116,24 +177,20 @@ def describe_all_tools(settings: Settings | None = None) -> list[dict[str, objec
         ]),
     ]
 
-    # Артефакты — общие инструменты для всех сабагентов
-    artifact_specs = [
-        ToolSpec("create_artifact", "Создать именованный артефакт текущего run (виден другим сабагентам)", 0, lambda a: None, {"name": "str", "content": "str", "mime_type": "str?", "run_id": "str?"}),
-        ToolSpec("read_artifact", "Прочитать артефакт по имени (run_id — опционально)", 0, lambda a: None, {"name": "str", "run_id": "str?"}),
-        ToolSpec("list_artifacts", "Список артефактов текущего run", 0, lambda a: None, {"run_id": "str?"}),
-    ]
-
-    result: list[dict[str, object]] = list(director_tools)
+    result: list[dict[str, object]] = list(operator_tools)
+    if pc_mode:
+        sub_agent_specs = []
     for agent_name, specs in sub_agent_specs:
+        agent_cfg = agents_config.get(agent_name)
+        if isinstance(agent_cfg, dict) and not bool(agent_cfg.get("enabled", True)):
+            continue
+        agent_enabled = enabled_tool_names(agent_name)
         for spec in specs:
+            if agent_enabled is not None and spec.name not in agent_enabled:
+                continue
             desc = spec.describe()
             desc["agent"] = agent_name
             result.append(desc)
-        for spec in artifact_specs:
-            desc = spec.describe()
-            desc["agent"] = agent_name
-            result.append(desc)
-
     return result
 
 
@@ -144,24 +201,24 @@ def _make_memory_store(settings: Settings, agent_name: str) -> ChatMemoryStore:
     return ChatMemoryStore(memory_dir / f"{agent_name}-memory.json")
 
 
-def _make_ask_director_callback(
+def _make_ask_operator_callback(
     llm_client: OllamaClient,
     event_sink: Callable[[str, object], None] | None,
     memory_store: "ChatMemoryStore | None" = None,
     get_runtime_state: "Callable[[], object | None] | None" = None,
 ) -> Callable[[str], str]:
     """
-    Возвращает callback, который делает один текстовый LLM-вызов директора
+    Возвращает callback, который делает один текстовый LLM-вызов оператора
     с полным контекстом: история из chat-memory + текущая сессия в реалтайме.
     """
     import json as _json
 
-    director_system = (
-        "Ты — директор-управляющий Vivi. Один из твоих сабагентов задаёт тебе уточняющий вопрос. "
+    operator_system = (
+        "Ты — оператор-управляющий Vivi. Один из твоих сабагентов задаёт тебе уточняющий вопрос. "
         "Ответь коротко и конкретно на русском языке. Если не знаешь — скажи честно."
     )
 
-    def ask_director(question: str) -> str:
+    def ask_operator(question: str) -> str:
         context_parts: list[str] = []
 
         # Прошлая история из файла
@@ -211,16 +268,16 @@ def _make_ask_director_callback(
         user_content = f"{context_str}\n\nВопрос от сабагента: {question}" if context_str else question
 
         messages = [
-            {"role": "system", "content": director_system},
+            {"role": "system", "content": operator_system},
             {"role": "user", "content": user_content},
         ]
         try:
             answer = llm_client.chat(messages)
         except Exception as exc:
-            answer = f"Директор не смог ответить: {exc}"
+            answer = f"Оператор не смог ответить: {exc}"
         return answer
 
-    return ask_director
+    return ask_operator
 
 
 def _build_all_tool_specs(
@@ -236,6 +293,8 @@ def _build_all_tool_specs(
     telegram_tools = TelegramTools(settings)
     clipboard_tools = ClipboardTools()
     notification_tools = NotificationTools()
+    keyboard_tools = SystemKeyboardTools()
+    system_mouse_tools = SystemMouseTools()
 
     specs: list[ToolSpec] = [
         # --- файловые ---
@@ -270,7 +329,15 @@ def _build_all_tool_specs(
         ToolSpec("get_clipboard", "Прочитать текущее содержимое буфера обмена", 0, clipboard_tools.get_clipboard, {}),
         ToolSpec("set_clipboard", "Записать текст в буфер обмена", 1, clipboard_tools.set_clipboard, {"text": "str"}),
         ToolSpec("show_notification", "Показать Windows toast-уведомление", 0, notification_tools.show_notification, {"title": "str?", "message": "str"}),
-        ToolSpec("take_screenshot", "Сделать скриншот экрана и сохранить PNG", 0, notification_tools.take_screenshot, {"path": "str?"}),
+        ToolSpec("get_screen_info", "Получить геометрию экранов, позицию курсора и активное окно Windows", 0, ScreenTools().get_screen_info, {}),
+        ToolSpec("take_screenshot", "Сделать скриншот экрана (весь экран или область x/y/width/height) и вернуть PNG", 0, ScreenTools().take_screenshot, {"x": "int?", "y": "int?", "width": "int?", "height": "int?"}),
+        ToolSpec("system_mouse_move", "Реально переместить системный курсор Windows по координатам экрана", 0, system_mouse_tools.move, {"x": "int", "y": "int"}),
+        ToolSpec("system_mouse_click", "Выполнить системный клик Windows в текущей позиции курсора. Для позиционирования сначала используй system_mouse_move", 0, system_mouse_tools.click, {"button": "str?"}),
+        ToolSpec("system_mouse_double_click", "Выполнить двойной левый клик Windows в текущей позиции курсора", 0, system_mouse_tools.double_click, {}),
+        ToolSpec("system_mouse_scroll", "Прокрутить колесо мыши Windows. clicks < 0 вниз, clicks > 0 вверх", 0, system_mouse_tools.scroll, {"clicks": "int", "x": "int?", "y": "int?"}),
+        ToolSpec("system_mouse_drag", "Перетащить мышью от from_x/from_y до to_x/to_y", 0, system_mouse_tools.drag, {"from_x": "int", "from_y": "int", "to_x": "int", "to_y": "int", "duration_ms": "int?"}),
+        ToolSpec("system_type_text", "Ввести текст в активное поле через системную клавиатуру Windows", 0, keyboard_tools.type_text, {"text": "str", "interval_ms": "int?"}),
+        ToolSpec("system_key_press", "Нажать клавишу или сочетание клавиш Windows: enter, tab, esc, win+r, alt+tab, ctrl+shift+esc, printscreen, vk:0x5b.", 0, keyboard_tools.press_key, {"key": "str", "repeats": "int?"}),
         # --- веб ---
         ToolSpec("fetch_url", "Прочитать содержимое веб-страницы (parse_text=true → чистый текст без HTML)", 0, web_tools.fetch_url, {"url": "str", "parse_text": "bool?"}),
         ToolSpec("search_web", "Поиск в интернете через DuckDuckGo — возвращает список результатов с заголовком, URL и сниппетом", 0, web_tools.search_web, {"query": "str", "max_results": "int?"}),
@@ -280,8 +347,10 @@ def _build_all_tool_specs(
         ToolSpec("telegram_auth_code", "Подтвердить авторизацию кодом из Telegram (и паролем 2FA)", 1, telegram_tools.telegram_auth_code, {"phone_number": "str", "code": "str", "password": "str?"}),
         ToolSpec("send_telegram_message", "Отправить сообщение в Telegram от имени пользователя", 1, telegram_tools.send_message, {"recipient": "str", "message": "str"}),
         ToolSpec("get_chats", "Получить список чатов (limit до 100, offset, chat_type: all/unknown(user)/channel)", 0, telegram_tools.get_chats, {"limit": "int?", "offset": "int?", "chat_type": "str?"}),
-        ToolSpec("get_messages", "Получить сообщения из чата (chat_id, limit до 500, offset)", 0, telegram_tools.get_messages, {"chat_id": "str", "limit": "int?", "offset": "int?"}),
+        ToolSpec("get_messages", "Получить сообщения из чата (chat_id, limit до 500, offset), опционально только от одного отправителя (from_user). Каждое сообщение содержит media_type (photo/document/video/audio/None)", 0, telegram_tools.get_messages, {"chat_id": "str", "limit": "int?", "offset": "int?", "from_user": "str?"}),
+        ToolSpec("read_chat_image", "Скачать фото из конкретного сообщения чата (id из get_messages, media_type=photo) и увидеть его как изображение", 0, telegram_tools.read_chat_image, {"chat_id": "str", "message_id": "str"}),
         ToolSpec("get_contacts", "Получить список контактов (limit, offset)", 0, telegram_tools.get_contacts, {"limit": "int?", "offset": "int?"}),
+        ToolSpec("get_own_telegram_profile", "Обновить и получить свой закреплённый профиль в Telegram (username, имя, id)", 0, telegram_tools.get_own_profile, {}),
     ]
 
     # Артефактные инструменты (только если есть server_context)
@@ -300,6 +369,28 @@ def _build_all_tool_specs(
     return {s.name: s for s in specs}
 
 
+def _build_prompt_vars(agent_name: str) -> dict[str, str]:
+    """Готовит дополнительные плейсхолдеры системного промпта конкретного
+    саб-агента. Сейчас используется только для telegram — "закреплённый" профиль
+    пользователя (username/имя), сохранённый после успешной авторизации, чтобы
+    агент знал, от чьего имени он действует, без похода в сеть на каждый запуск."""
+    if agent_name != "telegram":
+        return {}
+    from src.tools.telegram_tools import load_telegram_profile
+
+    profile = load_telegram_profile()
+    if not profile:
+        return {
+            "tg_username": "не указан (профиль ещё не синхронизирован)",
+            "tg_display_name": "неизвестно",
+        }
+    username = profile.get("username") or "без username"
+    full_name = " ".join(
+        part for part in [profile.get("first_name", ""), profile.get("last_name", "")] if part
+    ).strip() or "не указано"
+    return {"tg_username": str(username), "tg_display_name": full_name}
+
+
 def _build_sub_agents(
     client: OllamaClient,
     settings: Settings,
@@ -307,18 +398,19 @@ def _build_sub_agents(
     server_context: object | None = None,
 ) -> AgentRegistry:
     """Создаёт и регистрирует всех сабагентов на основе data/agents.json."""
+    if is_pc_control_mode():
+        return AgentRegistry()
     all_specs = _build_all_tool_specs(settings, server_context)
     agents_config = _load_agents_config()
 
-    # Артефактные инструменты добавляем всем сабагентам автоматически
-    artifact_names = {"create_artifact", "read_artifact", "list_artifacts", "handoff_artifact", "gc_artifacts", "wait_for_artifact", "mark_artifact_ready"}
-    extra_tools = [all_specs[n] for n in artifact_names if n in all_specs]
-
     def _make_client(agent_key: str) -> OllamaClient:
+        # timeout_seconds=None означает requests без таймаута вообще: если Ollama
+        # зависнет и не ответит, блокирующий вызов саб-агента не завершится никогда
+        # (и не будет прерван даже отменой — см. RunController cancel-колбэк).
         return OllamaClient(
             settings.ollama_base_url,
             settings.get_model(agent_key),
-            None,
+            settings.request_timeout_seconds,
             num_ctx=settings.num_ctx,
             api_key=settings.ollama_api_key,
             keep_alive=settings.ollama_keep_alive,
@@ -328,8 +420,10 @@ def _build_sub_agents(
     registry = AgentRegistry()
 
     for agent_name, agent_cfg in agents_config.items():
-        if agent_name == "director":
-            continue  # директор строится отдельно
+        if agent_name == "operator":
+            continue  # оператор строится отдельно
+        if isinstance(agent_cfg, dict) and not bool(agent_cfg.get("enabled", True)):
+            continue
         display_name = str(agent_cfg.get("display_name", agent_name))
         prompt_path = str(agent_cfg.get("prompt_path", f"prompts/agents/{agent_name}.txt"))
         raw_tools: list[object] = list(agent_cfg.get("tools", []))  # type: ignore[arg-type]
@@ -347,8 +441,6 @@ def _build_sub_agents(
             if enabled and name in all_specs:
                 agent_tools.append(all_specs[name])
 
-        agent_tools += extra_tools
-
         sub = SubAgent(
             name=agent_name,
             display_name=display_name,
@@ -358,151 +450,47 @@ def _build_sub_agents(
             memory_store=_make_memory_store(settings, agent_name),
             max_steps=settings.sub_agent_max_steps,
             user_name=settings.user_name,
+            prompt_vars=_build_prompt_vars(agent_name),
+            server_context=server_context,
         )
         registry.register(sub)
 
     return registry
 
 
-def build_director_registry(
+def build_operator_registry(
     delegate_tools: DelegateTools,
     run_tools: RunTools | None = None,
 ) -> ToolRegistry:
-    """Создаёт реестр инструментов директора."""
-    def unavailable_run_tool(name: str):
-        def _handler(*_args: object, **_kwargs: object) -> dict[str, object]:
-            return {
-                "ok": False,
-                "error": f"Инструмент {name} недоступен: отсутствует server context",
-                "available": False,
-            }
-
-        return _handler
-
-    run_tool_impl = run_tools or type(
-        "_UnavailableRunTools",
-        (),
-        {
-            "view_runs": unavailable_run_tool("view_runs"),
-            "cancel_run": unavailable_run_tool("cancel_run"),
-            "pause_run": unavailable_run_tool("pause_run"),
-            "resume_run": unavailable_run_tool("resume_run"),
-            "message_run": unavailable_run_tool("message_run"),
-            "replace_task_run": unavailable_run_tool("replace_task_run"),
-            "reprioritize_run": unavailable_run_tool("reprioritize_run"),
-            "get_world_state": unavailable_run_tool("get_world_state"),
-            "wait_for_event": unavailable_run_tool("wait_for_event"),
-        },
-    )()
+    """Создаёт реестр инструментов оператора."""
+    run_tool_impl = run_tools or unavailable_run_tools()
 
     registry = ToolRegistry()
-    specs: list[ToolSpec] = [
-        ToolSpec(
-            "delegate_task",
-            "Делегировать задачу одному специализированному агенту. Агенты: telegram, file, system, web. Параметры: agent_name (имя), task (задача), images (опционально — список base64-строк изображений для передаче агенту)",
-            0,
-            delegate_tools.delegate_task,
-            {"agent_name": "str", "task": "str", "images": "list?"},
-        ),
-        ToolSpec(
-            "delegate_parallel",
-            "Выполнить задачи у нескольких агентов одновременно (параллельно). tasks — список объектов {agent_name, task, images?}. Результаты возвращаются вместе.",
-            0,
-            delegate_tools.delegate_parallel,
-            {"tasks": "list"},
-        ),
-        ToolSpec("send_message", "Отправить промежуточное сообщение пользователю в чат", 0, send_message, {"message": "str"}),
-        ToolSpec("finish_task", "Завершить задачу и вернуть итоговый ответ", 0, finish_task, {"summary": "str?", "status": "str?", "changed_files": "list?", "verification": "list?", "risks": "list?"}),
-        ToolSpec(
-            "get_agent_memory",
-            "Просмотреть долгосрочную память саб-агента. Без agent — сводка по всем агентам. С agent — полная история (file/system/telegram/web). limit — кол-во последних записей (по умолчанию 10).",
-            0,
-            MemoryTools().get_agent_memory,
-            {"agent": "str?", "limit": "int?"},
-        ),
-        ToolSpec(
-            "view_runs",
-            "Показать активные запуски саб-агентов. limit — максимальное количество записей.",
-            0,
-            run_tool_impl.view_runs,
-            {"limit": "int?"},
-        ),
-        ToolSpec(
-            "cancel_run",
-            "Отменить активный запуск саб-агента по run_id.",
-            0,
-            run_tool_impl.cancel_run,
-            {"run_id": "str"},
-        ),
-        ToolSpec(
-            "pause_run",
-            "Приостановить активный запуск саб-агента по run_id.",
-            0,
-            run_tool_impl.pause_run,
-            {"run_id": "str"},
-        ),
-        ToolSpec(
-            "resume_run",
-            "Возобновить приостановленный запуск саб-агента по run_id.",
-            0,
-            run_tool_impl.resume_run,
-            {"run_id": "str"},
-        ),
-        ToolSpec(
-            "message_run",
-            "Отправить сообщение в inbox активного запуска саб-агента по run_id.",
-            0,
-            run_tool_impl.message_run,
-            {"run_id": "str", "message": "str"},
-        ),
-        ToolSpec(
-            "replace_task_run",
-            "Заменить задачу (user_goal) у активного запуска саб-агента по run_id.",
-            0,
-            run_tool_impl.replace_task_run,
-            {"run_id": "str", "task": "str"},
-        ),
-        ToolSpec(
-            "reprioritize_run",
-            "Изменить приоритет активного run (priority: 1=высший, 10=низший).",
-            0,
-            run_tool_impl.reprioritize_run,
-            {"run_id": "str", "priority": "int"},
-        ),
-        ToolSpec(
-            "get_world_state",
-            "Получить структурированный снимок состояния всей системы: активные run, вопросы, блокировки.",
-            0,
-            run_tool_impl.get_world_state,
-            {},
-        ),
-        ToolSpec(
-            "wait_for_event",
-            "Ждать завершения конкретного run. run_id — идентификатор, timeout_seconds — максимальное ожидание.",
-            0,
-            run_tool_impl.wait_for_event,
-            {"run_id": "str", "timeout_seconds": "float?"},
-        ),
-    ]
+    pc_mode = is_pc_control_mode()
+    specs = operator_tool_specs(delegate_tools, run_tool_impl)
     # Фильтруем по полю enabled из agents.json
     agents_config = _load_agents_config()
-    director_cfg = agents_config.get("director")
+    operator_cfg = agents_config.get("operator")
     enabled_names: set[str] | None = None
-    if director_cfg and isinstance(director_cfg, dict):
-        raw_tools = director_cfg.get("tools")
+    if operator_cfg and isinstance(operator_cfg, dict):
+        raw_tools = operator_cfg.get("tools")
         if isinstance(raw_tools, list):
             enabled_names = set()
             for entry in raw_tools:
                 if isinstance(entry, dict):
                     name = str(entry.get("name", ""))
-                    required = bool(entry.get("required", False)) or name in DIRECTOR_REQUIRED_TOOLS
+                    required = bool(entry.get("required", False)) or name in OPERATOR_REQUIRED_TOOLS
                     if required or entry.get("enabled", True):
                         enabled_names.add(name)
                 else:
                     enabled_names.add(str(entry))
-            enabled_names.update(DIRECTOR_REQUIRED_TOOLS)
+            enabled_names.update(OPERATOR_REQUIRED_TOOLS)
 
     for spec in specs:
+        if pc_mode and spec.name in _OPERATOR_ORCHESTRATION_TOOLS:
+            continue
+        if (not pc_mode) and spec.name in (OPERATOR_RUN_TOOLS | _OPERATOR_PC_TOOLS):
+            continue
         if enabled_names is not None and spec.name not in enabled_names:
             continue
         registry.register(spec)
@@ -519,9 +507,9 @@ def build_runtime(
 ) -> tuple[AgentRuntime, ToolRegistry, Settings]:
     settings = settings or get_settings()
 
-    director_client = OllamaClient(
+    operator_client = OllamaClient(
         settings.ollama_base_url,
-        settings.get_model("director"),
+        settings.get_model("operator"),
         settings.request_timeout_seconds,
         num_ctx=settings.num_ctx,
         api_key=settings.ollama_api_key,
@@ -532,17 +520,17 @@ def build_runtime(
     memory_store = ChatMemoryStore(settings.memory_file)
 
     # Создаём сабагентов
-    # ask_director callback — один LLM-вызов директора для ответа на вопросы сабагентов
+    # ask_operator callback — один LLM-вызов оператора для ответа на вопросы сабагентов
     _runtime_ref: list[AgentRuntime] = []
-    ask_director_callback = _make_ask_director_callback(
-        director_client,
+    ask_operator_callback = _make_ask_operator_callback(
+        operator_client,
         event_sink,
         memory_store=memory_store,
         get_runtime_state=lambda: _runtime_ref[0]._current_state if _runtime_ref else None,
     )
 
     agent_registry = _build_sub_agents(
-        director_client,
+        operator_client,
         settings,
         event_sink=event_sink,
         server_context=server_context,
@@ -550,19 +538,19 @@ def build_runtime(
     delegate_tools = DelegateTools(
         agent_registry,
         event_sink=event_sink,
-        ask_director_callback=ask_director_callback,
+        ask_operator_callback=ask_operator_callback,
         create_run_controller=create_run_controller,
     )
     run_tools = RunTools(server_context) if server_context else None
-    director_registry = build_director_registry(delegate_tools, run_tools)
+    operator_registry = build_operator_registry(delegate_tools, run_tools)
 
-    # Описания агентов для промпта директора
+    # Описания агентов для промпта оператора
     available_agents = agent_registry.describe_all()
 
     runtime = AgentRuntime(
-        client=director_client,
-        registry=director_registry,
-        validator=ActionValidator(director_registry),
+        client=operator_client,
+        registry=operator_registry,
+        validator=ActionValidator(operator_registry),
         policy=SafetyPolicy(),
         logger=logger,
         memory_store=memory_store,
@@ -573,8 +561,9 @@ def build_runtime(
         event_sink=event_sink,
         user_name=settings.user_name,
         available_agents=available_agents,
-        get_active_runs=lambda: server_context.run_registry.list_active() if server_context else [],
-        get_supervisor_observations=lambda: server_context.get_supervisor_alerts() if server_context else [],
+        get_active_runs=lambda: [],
+        get_supervisor_observations=lambda: [],
         settings=settings,
+        server_context=server_context,
     )
-    return runtime, director_registry, settings
+    return runtime, operator_registry, settings

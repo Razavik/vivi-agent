@@ -1,6 +1,9 @@
 requests
-websockets
+fastapi
+uvicorn[standard]
+websockets>=13
 telethon
 tiktoken
 python-dotenv
 pytest
+httpx

@@ -1,0 +1,273 @@
+.sidebar {
+	width: 330px;
+	min-width: 300px;
+	max-width: 380px;
+	padding: 14px;
+	border-left: 1px solid rgba(255, 255, 255, 0.08);
+	background: var(--bg-sidebar);
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	overflow-y: auto;
+}
+
+.summaryCard {
+	position: relative;
+	overflow: hidden;
+	padding: 16px 16px 14px;
+	border-radius: 18px;
+	border: 1px solid rgba(126, 176, 255, 0.16);
+	background:
+		linear-gradient(
+			160deg,
+			rgba(255, 255, 255, 0.05),
+			rgba(255, 255, 255, 0.02)
+		),
+		rgba(24, 21, 36, 0.92);
+	box-shadow:
+		0 16px 34px rgba(0, 0, 0, 0.16),
+		inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.summaryTop {
+	position: relative;
+	z-index: 1;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	margin-bottom: 10px;
+}
+
+.badge {
+	font-size: 10px;
+	font-weight: 700;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--accent);
+	background: rgba(192, 132, 252, 0.14);
+	border: 1px solid rgba(192, 132, 252, 0.18);
+	border-radius: 999px;
+	padding: 4px 8px;
+}
+
+.heroValue {
+	font-family: var(--font-mono);
+	font-size: 18px;
+	line-height: 1;
+	font-weight: 700;
+	color: var(--text-main);
+	text-shadow: 0 0 24px rgba(126, 176, 255, 0.35);
+}
+
+.summaryTitle {
+	position: relative;
+	z-index: 1;
+	margin: 0;
+	font-size: 18px;
+	line-height: 1.25;
+	letter-spacing: -0.02em;
+	color: var(--text-main);
+}
+
+.summaryText {
+	position: relative;
+	z-index: 1;
+	margin: 8px 0 0;
+	font-size: 12px;
+	line-height: 1.5;
+	color: var(--text-muted);
+}
+
+.miniStats {
+	position: relative;
+	z-index: 1;
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 8px;
+	margin-top: 12px;
+}
+
+.statCard {
+	padding: 8px 9px;
+	border-radius: 12px;
+	border: 1px solid rgba(255, 255, 255, 0.07);
+	background: rgba(255, 255, 255, 0.04);
+	backdrop-filter: blur(10px);
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.statLabel {
+	font-size: 10px;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--text-muted);
+}
+
+.statValue {
+	font-size: 18px;
+	line-height: 1;
+	font-weight: 700;
+	color: var(--text-main);
+}
+
+.progressTrack {
+	position: relative;
+	z-index: 1;
+	margin-top: 12px;
+	height: 6px;
+	border-radius: 999px;
+	background: rgba(255, 255, 255, 0.08);
+	border: 1px solid rgba(255, 255, 255, 0.06);
+	overflow: hidden;
+}
+
+.progressFill {
+	height: 100%;
+	border-radius: inherit;
+	background: linear-gradient(90deg, var(--accent), #7eb0ff);
+	box-shadow: 0 0 20px rgba(126, 176, 255, 0.45);
+	transition: width 0.35s ease;
+}
+
+.focusCard {
+	padding: 12px 12px 11px;
+	border-radius: 14px;
+	border: 1px solid rgba(126, 176, 255, 0.14);
+	background: rgba(126, 176, 255, 0.05);
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.calloutLabel {
+	font-size: 10px;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: rgba(126, 176, 255, 0.8);
+	margin-bottom: 6px;
+}
+
+.calloutText {
+	font-size: 12px;
+	line-height: 1.45;
+	color: var(--text-main);
+	margin-top: 4px;
+}
+
+.focusMeta {
+	margin-top: 8px;
+	font-size: 10px;
+	line-height: 1.4;
+	color: var(--text-muted);
+}
+
+.emptyTitle {
+	font-size: 13px;
+	font-weight: 700;
+	color: var(--text-main);
+	margin-bottom: 6px;
+}
+
+.emptyText {
+	font-size: 12px;
+	line-height: 1.6;
+	color: var(--text-muted);
+}
+
+.planGraph {
+	padding: 12px 12px 11px;
+	border-radius: 14px;
+	border: 1px solid rgba(126, 176, 255, 0.14);
+	background: rgba(126, 176, 255, 0.05);
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.planGraphHeader {
+	font-size: 10px;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: rgba(126, 176, 255, 0.8);
+	margin-bottom: 10px;
+}
+
+.planGraphList {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.planGraphItem {
+	display: flex;
+	gap: 8px;
+	position: relative;
+}
+
+.planGraphIcon {
+	width: 14px;
+	height: 14px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-size: 10px;
+	flex-shrink: 0;
+}
+
+.planGraphItem.completed .planGraphIcon {
+	color: var(--ok);
+}
+
+.planGraphItem.in_progress .planGraphIcon {
+	color: #7eb0ff;
+	animation: planSpin 1.4s linear infinite;
+}
+
+.planGraphItem.pending .planGraphIcon {
+	color: var(--text-muted);
+	opacity: 0.4;
+}
+
+@keyframes planSpin {
+	from {
+		transform: rotate(0deg);
+	}
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+.planGraphContent {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+}
+
+.planGraphText {
+	font-size: 12px;
+	line-height: 1.45;
+	color: var(--text-main);
+}
+
+.planGraphItem.completed .planGraphText {
+	color: var(--text-muted);
+	opacity: 0.5;
+	text-decoration: line-through;
+	text-decoration-color: rgba(255, 255, 255, 0.15);
+}
+
+.planGraphItem.pending .planGraphText {
+	color: var(--text-muted);
+}
+
+.planGraphLine {
+	width: 2px;
+	flex: 1;
+	background: var(--border);
+	margin-top: 4px;
+	min-height: 8px;
+	margin-left: 6px;
+}

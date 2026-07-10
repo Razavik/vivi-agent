@@ -7,6 +7,25 @@ from typing import Any, Callable
 ToolHandler = Callable[[dict[str, Any]], Any]
 
 
+def result_indicates_failure(result: Any) -> bool:
+    """Эвристика: инструмент вернул словарь-ошибку вместо выброса исключения.
+
+    Многие инструменты не бросают исключение, а возвращают ``{"ok": False, ...}``
+    или ``{"error": "..."}``. Без этой проверки такой результат записывается как
+    успешный шаг, и ошибка не видна ни агенту, ни в UI.
+    """
+    if not isinstance(result, dict):
+        return False
+    if result.get("ok") is False or result.get("success") is False:
+        return True
+    error = result.get("error")
+    if isinstance(error, str):
+        return bool(error.strip())
+    if isinstance(error, (list, dict)):
+        return bool(error)
+    return error is not None
+
+
 @dataclass(slots=True)
 class ToolSpec:
     name: str

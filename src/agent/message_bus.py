@@ -4,7 +4,7 @@
 - msg_id      : уникальный UUID
 - correlation_id : связь с родительским сообщением (опционально)
 - msg_type    : тип сообщения (run_started, progress_update, question, ...)
-- sender      : кто отправил (director / agent_name / system)
+- sender      : кто отправил (operator / agent_name / system)
 - run_id      : к какому run относится (опционально)
 - payload     : произвольный dict с данными
 - timestamp   : время создания
@@ -26,8 +26,8 @@ MSG_TYPES = frozenset({
     "run_started",
     "progress_update",
     "heartbeat",
-    "question_to_director",
-    "answer_from_director",
+    "question_to_operator",
+    "answer_from_operator",
     "directive",
     "pause_requested",
     "resume_requested",
@@ -38,7 +38,7 @@ MSG_TYPES = frozenset({
     "dependency_ready",
     "run_finished",
     "run_failed",
-    "outbox_message",       # произвольное сообщение от саб-агента директору
+    "outbox_message",       # произвольное сообщение от саб-агента оператору
     "system_event",
 })
 

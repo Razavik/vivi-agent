@@ -87,7 +87,7 @@ class RunPolicy:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "RunPolicy":
-        """Создаёт RunPolicy из словаря (передаётся от директора через delegate_task)."""
+        """Создаёт RunPolicy из словаря (передаётся от оператора через delegate_task)."""
         level = int(data.get("permission_level", 2))
         quota_data = data.get("quota", {})
         quota = RunQuota(

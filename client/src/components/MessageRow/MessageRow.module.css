@@ -25,10 +25,14 @@
 }
 
 .userMessage .eventContent {
-	background-color: var(--bg-input);
-	border-radius: 12px;
+	background:
+		linear-gradient(135deg, rgba(192, 132, 252, 0.15), rgba(236, 72, 153, 0.09)),
+		var(--bg-input);
+	border: 1px solid rgba(192, 132, 252, 0.18);
+	border-radius: var(--radius-lg);
 	max-width: 70%;
-	padding: 10px;
+	padding: 10px 12px;
+	box-shadow: 0 12px 34px rgba(0, 0, 0, 0.18);
 }
 
 .userMessage .eventLabel {
@@ -37,73 +41,6 @@
 
 .userMessage .eventText {
 	color: var(--text-main);
-}
-
-.imageGrid {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 6px;
-	margin-bottom: 8px;
-}
-
-.messageImage {
-	width: 80px;
-	height: 80px;
-	border-radius: 8px;
-	border: 1px solid var(--border);
-	object-fit: cover;
-	cursor: zoom-in;
-	transition:
-		opacity 0.15s,
-		transform 0.15s;
-}
-
-.messageImage:hover {
-	opacity: 0.85;
-	transform: scale(1.04);
-}
-
-.lightboxOverlay {
-	position: fixed;
-	inset: 0;
-	z-index: 1000;
-	background: rgba(0, 0, 0, 0.82);
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	cursor: zoom-out;
-}
-
-.lightboxImage {
-	max-width: 90vw;
-	max-height: 90vh;
-	border-radius: 10px;
-	box-shadow: 0 8px 48px rgba(0, 0, 0, 0.7);
-	cursor: default;
-	object-fit: contain;
-}
-
-.lightboxClose {
-	position: fixed;
-	top: 20px;
-	right: 24px;
-	background: rgba(255, 255, 255, 0.1);
-	border: 1px solid rgba(255, 255, 255, 0.2);
-	color: white;
-	font-size: 24px;
-	line-height: 1;
-	width: 36px;
-	height: 36px;
-	border-radius: 50%;
-	cursor: pointer;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	transition: background 0.15s;
-}
-
-.lightboxClose:hover {
-	background: rgba(255, 255, 255, 0.22);
 }
 
 .answerBlock {
@@ -116,8 +53,8 @@
 }
 
 .inlineCode {
-	background: rgba(126, 176, 255, 0.14);
-	border: 1px solid rgba(126, 176, 255, 0.22);
+	background: rgba(192, 132, 252, 0.14);
+	border: 1px solid rgba(192, 132, 252, 0.24);
 	border-radius: 8px;
 	padding: 0.08em 0.45em;
 	font-family: "Cascadia Code", "Consolas", "Liberation Mono", monospace;
@@ -131,7 +68,7 @@
 	margin: 12px 0 0;
 	padding: 14px 16px;
 	overflow-x: auto;
-	background: #10141f;
+	background: #120f1d;
 	border: 1px solid rgba(255, 255, 255, 0.08);
 	border-radius: 14px;
 	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
@@ -143,7 +80,7 @@
 	font-size: 13px;
 	line-height: 1.65;
 	white-space: pre;
-	color: #d7e3ff;
+	color: #eadcff;
 }
 
 .blockCode {
@@ -154,3 +91,4 @@
 	white-space: inherit;
 	color: inherit;
 }
+

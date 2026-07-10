@@ -4,6 +4,7 @@ import json
 import re
 from dataclasses import asdict
 from typing import Any, Callable
+from uuid import uuid4
 
 from src.agent.schemas import ActionStep
 from src.agent.events import normalize_event
@@ -15,7 +16,7 @@ from src.llm.ollama_client import OllamaClient
 from src.llm.prompt_builder import build_messages
 from src.safety.policy import SafetyPolicy
 from src.safety.validator import ActionValidator
-from src.tools.registry import ToolRegistry
+from src.tools.registry import ToolRegistry, result_indicates_failure
 
 
 class AgentRuntime:
@@ -37,9 +38,14 @@ class AgentRuntime:
         get_active_runs: Callable[[], list[dict[str, Any]]] | None = None,
         get_supervisor_observations: Callable[[], list[dict[str, Any]]] | None = None,
         settings: Any | None = None,
+        server_context: Any | None = None,
     ) -> None:
         from src.infra.config import Settings
         self.client = client
+        # Нужен для сохранения картинок инструментов как артефактов (см.
+        # src.infra.image_artifacts), чтобы оператор мог встроить их в текст
+        # ответа пользователю через finish_task(attach_images=true).
+        self.server_context = server_context
         self.registry = registry
         self.validator = validator
         self.policy = policy
@@ -56,21 +62,41 @@ class AgentRuntime:
         self.get_active_runs = get_active_runs
         self.get_supervisor_observations = get_supervisor_observations
         self._current_state: SessionState | None = None
+        self._base_history: list[dict[str, Any]] = []
         self.settings = settings
 
     def cancel(self) -> None:
         self.cancelled = True
+        self._persist_interrupted_snapshot()
+        try:
+            self.client.cancel_active_request()
+        except Exception:
+            pass
 
     def run(self, user_goal: str, chat_history: list[dict[str, str]] | None = None, images: list[str] | None = None) -> str:
+        self.cancelled = False
+        try:
+            self.client.reset_cancel_request()
+        except Exception:
+            pass
         state = SessionState(user_goal=user_goal)
         self._current_state = state
         current_step: ActionStep | None = None
+        extracted_images: list[str] = images or []
+        # Все картинки, увиденные оператором за эту сессию — свои (например
+        # take_screenshot в pc_control_mode) и полученные от делегированных
+        # саб-агентов через delegate_task — для finish_task(attach_images=true).
+        image_urls: list[str] = []
+        # Стабильный run_id для сохранения артефактов-картинок оператора (у
+        # оператора нет собственного run_id, в отличие от делегированных run).
+        operator_run_id = str(uuid4())
         memory = self.memory_store.load()
         for item in memory.get("chat_history", []):
             role = item.get("role")
             content = item.get("content")
             thought = item.get("thought")
             raw_plan = item.get("plan")
+            interrupted_by_user = bool(item.get("interrupted_by_user"))
             if isinstance(role, str) and isinstance(content, str):
                 plan_items: list[PlanItem] = []
                 if isinstance(raw_plan, list):
@@ -88,6 +114,7 @@ class AgentRuntime:
                         content=content,
                         thought=thought if isinstance(thought, str) else None,
                         plan=plan_items,
+                        interrupted_by_user=interrupted_by_user,
                     )
                 )
                 if role == "assistant" and plan_items:
@@ -100,10 +127,13 @@ class AgentRuntime:
                     state.chat_history.append(ChatMessage(role=role, content=content))
         state.add_chat_message("user", user_goal)
         base_history: list[dict] = self.memory_store.load().get("chat_history", [])
+        self._base_history = base_history
+        self._write_memory_snapshot(base_history, state.chat_history, state.observations)
         self.logger.write("session_started", {"goal": user_goal})
         self._emit("session_started", {"goal": user_goal})
-        last_actions: list[tuple[str, str]] = []  # для loop detection директора
+        last_actions: list[tuple[str, str]] = []  # для loop detection оператора
         for step_number in range(1, self.max_steps + 1):
+            streamed_text = ""
             # Если finish_task уже был вызван — принудительно завершаем
             for obs in reversed(state.observations):
                 if obs.action == "finish_task" and obs.success:
@@ -112,12 +142,17 @@ class AgentRuntime:
                     return final
             if self.cancelled:
                 self.logger.write("cancelled", {"step": step_number})
+                self._add_assistant_message_once(state, "", interrupted_by_user=True)
+                self._write_memory_snapshot(base_history, state.chat_history, state.observations)
                 self._emit("cancelled", {"step": step_number})
-                raise AgentError("Задача была прервана пользователем")
+                return ""
             try:
                 active_runs = self.get_active_runs() if self.get_active_runs else []
                 supervisor_obs = self.get_supervisor_observations() if self.get_supervisor_observations else []
-                messages, token_count = build_messages(state, self.registry.describe_all(), self.workspace_root, self.user_name, self.available_agents, images=images if step_number == 1 else None, active_runs=active_runs, supervisor_observations=supervisor_obs, user_profile=self.settings.user_profile)
+                images_for_step = extracted_images if extracted_images else None
+                messages, token_count = build_messages(state, self.registry.describe_all(), self.workspace_root, self.user_name, self.available_agents, images=images_for_step, active_runs=active_runs, supervisor_observations=supervisor_obs, user_profile=self.settings.user_profile)
+                if images_for_step:
+                    extracted_images = []
                 self._emit("context_tokens", {"count": token_count})
                 streamed_text = ""
 
@@ -126,12 +161,22 @@ class AgentRuntime:
                     action = self._extract_complete_json_string_field(raw_content, "action")
                     if action != "finish_task":
                         return
-                    # summary лежит внутри args.summary
-                    args_match = re.search(r'"args"\s*:\s*\{.*?"summary"\s*:\s*"((?:\\.|[^"\\])*)', raw_content, re.DOTALL)
-                    summary = self._decode_json_string_fragment(args_match.group(1)) if args_match else None
+                    # summary может приходить частями, поэтому читаем и частичный фрагмент
+                    summary = self._extract_partial_json_string_field(raw_content, "summary")
                     if not summary or summary == streamed_text:
                         return
                     streamed_text = summary
+                    state.live_answer = summary
+                    live_chat_history = [
+                        *state.chat_history,
+                        ChatMessage(role="assistant", content=summary, plan=state.plan),
+                    ]
+                    self._write_memory_snapshot(
+                        base_history,
+                        live_chat_history,
+                        state.observations,
+                        self.client.model,
+                    )
                     self._emit("assistant_stream", {"content": summary})
 
                 def on_thinking(thinking_text: str) -> None:
@@ -190,7 +235,7 @@ class AgentRuntime:
                     last_actions.pop(0)
                 if len(last_actions) >= 3 and len(set(last_actions[-3:])) == 1:
                     loop_msg = (
-                        f"Зацикливание директора: действие '{current_step.action}' повторилось 3 раза подряд. "
+                        f"Зацикливание оператора: действие '{current_step.action}' повторилось 3 раза подряд. "
                         f"Используй другой инструмент, другие аргументы или заверши задачу через finish_task."
                     )
                     self.logger.write("loop_detected", {"step": step_number, "action": current_step.action})
@@ -206,24 +251,38 @@ class AgentRuntime:
                     current_step = None
                     continue
 
-                summary = self._execute_step(current_step, step_number, state)
+                summary = self._execute_step(current_step, step_number, state, extracted_images, image_urls, operator_run_id)
                 if summary is not None:
-                    state.add_chat_message(
-                        "assistant",
+                    state.live_answer = ""
+                    self._add_assistant_message_once(
+                        state,
                         summary,
                         thought=native_thought or current_step.thought,
-                        plan=state.plan,
                     )
-                    self.memory_store.append_session(state.chat_history, state.observations)
+                    self._write_memory_snapshot(base_history, state.chat_history, state.observations)
                     self.logger.write("session_finished", {"summary": summary})
                     self._emit("session_finished", {"summary": summary})
                     return summary
-                self.memory_store.write_snapshot(base_history, state.chat_history, state.observations)
+                self._write_memory_snapshot(base_history, state.chat_history, state.observations)
                 state.consecutive_errors = 0
                 current_step = None
             except AgentError as exc:
                 state.consecutive_errors += 1
                 self.logger.write("agent_error", {"step": step_number, "message": str(exc)})
+                partial_answer = streamed_text.strip()
+                if self.cancelled:
+                    self._add_assistant_message_once(
+                        state,
+                        partial_answer,
+                        thought=current_step.thought if current_step else None,
+                        interrupted_by_user=True,
+                    )
+                state.live_answer = ""
+                if self.cancelled:
+                    self._write_memory_snapshot(base_history, state.chat_history, state.observations)
+                    self.logger.write("cancelled", {"step": step_number})
+                    self._emit("cancelled", {"step": step_number, "summary": partial_answer})
+                    return partial_answer
                 self._emit("agent_error", {"step": step_number, "message": str(exc)})
                 state.add_observation(
                     Observation(
@@ -234,26 +293,110 @@ class AgentRuntime:
                         thought=current_step.thought if current_step else None,
                     )
                 )
-                self.memory_store.write_snapshot(base_history, state.chat_history, state.observations)
+                self._write_memory_snapshot(base_history, state.chat_history, state.observations)
                 if state.consecutive_errors > self.max_consecutive_errors:
                     summary = f"Сессия остановлена после повторяющихся ошибок: {exc}"
-                    state.add_chat_message(
-                        "assistant",
+                    state.live_answer = ""
+                    self._add_assistant_message_once(
+                        state,
                         summary,
                         thought=current_step.thought if current_step else None,
-                        plan=state.plan,
                     )
-                    self.memory_store.append_session(state.chat_history, state.observations)
+                    self._write_memory_snapshot(base_history, state.chat_history, state.observations)
                     self._emit("session_finished", {"summary": summary})
                     return summary
                 current_step = None
         summary = "Сессия остановлена: достигнут лимит шагов"
-        state.add_chat_message("assistant", summary, plan=state.plan)
-        self.memory_store.append_session(state.chat_history, state.observations)
+        state.live_answer = ""
+        self._add_assistant_message_once(state, summary)
+        self._write_memory_snapshot(base_history, state.chat_history, state.observations)
         self._emit("session_finished", {"summary": summary})
         return summary
 
-    def _execute_step(self, step: ActionStep, step_number: int, state: SessionState) -> str | None:
+    def _add_assistant_message_once(
+        self,
+        state: SessionState,
+        content: str,
+        thought: str | None = None,
+        interrupted_by_user: bool = False,
+    ) -> None:
+        if state.chat_history:
+            last_message = state.chat_history[-1]
+            if last_message.role == "assistant" and last_message.content.strip() == content.strip():
+                if thought and not last_message.thought:
+                    last_message.thought = thought
+                if state.plan and not last_message.plan:
+                    last_message.plan = list(state.plan)
+                if interrupted_by_user:
+                    last_message.interrupted_by_user = True
+                return
+        state.add_chat_message(
+            "assistant",
+            content,
+            thought=thought,
+            plan=state.plan,
+            interrupted_by_user=interrupted_by_user,
+        )
+
+    def _persist_interrupted_snapshot(self) -> None:
+        state = self._current_state
+        if state is None:
+            return
+        try:
+            live_answer = state.live_answer.strip()
+            if live_answer:
+                live_chat_history = [
+                    *state.chat_history,
+                    ChatMessage(
+                        role="assistant",
+                        content=live_answer,
+                        plan=state.plan,
+                        interrupted_by_user=True,
+                    ),
+                ]
+            else:
+                live_chat_history = list(state.chat_history)
+                if not live_chat_history or live_chat_history[-1].role != "assistant":
+                    live_chat_history.append(
+                        ChatMessage(role="assistant", content="", interrupted_by_user=True)
+                    )
+                else:
+                    live_chat_history[-1].interrupted_by_user = True
+            self._write_memory_snapshot(
+                self._base_history,
+                live_chat_history,
+                state.observations,
+                self.client.model,
+            )
+        except Exception:
+            pass
+
+    def _write_memory_snapshot(
+        self,
+        base_history: list[dict[str, Any]],
+        chat_history: list[ChatMessage],
+        observations: list[Observation],
+        model: str | None = None,
+    ) -> bool:
+        try:
+            self.memory_store.write_snapshot(base_history, chat_history, observations, model)
+            return True
+        except Exception as exc:
+            try:
+                self.logger.write("memory_snapshot_error", {"error": str(exc)})
+            except Exception:
+                pass
+            return False
+
+    def _execute_step(
+        self,
+        step: ActionStep,
+        step_number: int,
+        state: SessionState,
+        extracted_images: list[str],
+        image_urls: list[str],
+        operator_run_id: str,
+    ) -> str | None:
         tool = self.validator.validate(step)
         self.policy.enforce(step, tool)
         if tool.risk_level >= 2:
@@ -279,20 +422,65 @@ class AgentRuntime:
             raise
         except Exception as exc:
             raise ToolExecutionError(f"Сбой инструмента {tool.name}: {exc}") from exc
-        observation = Observation(step=step_number, action=tool.name, result=result, success=True, thought=step.thought)
+
+        observation_result = result
+        if isinstance(result, dict) and result.get("_type") == "image" and isinstance(result.get("image"), str):
+            extracted_images.append(result["image"])
+            image_url = None
+            if self.server_context is not None:
+                from src.infra.image_artifacts import save_image_artifact
+                image_url = save_image_artifact(
+                    self.server_context, operator_run_id, result["image"], str(result.get("format", "image/png"))
+                )
+                if image_url:
+                    image_urls.append(image_url)
+            observation_result = dict(result)
+            observation_result.pop("image", None)
+            observation_result["image_attached"] = True
+            if image_url:
+                observation_result["image_url"] = image_url
+
+        # Делегированный саб-агент мог сам увидеть/скачать картинки (например
+        # read_chat_image у telegram) — их URL приходят в результате delegate_task/
+        # delegate_parallel. Подхватываем в свой накопитель, чтобы оператор мог
+        # переслать их пользователю через finish_task(attach_images=true).
+        if tool.name in ("delegate_task", "delegate_parallel") and isinstance(result, dict):
+            for url in self._extract_delegated_image_urls(result):
+                if url not in image_urls:
+                    image_urls.append(url)
+
+        # finish_task всегда считается успешным завершением; для остальных
+        # инструментов распознаём ошибку, возвращённую словарём (в т.ч. проваленное
+        # делегирование), чтобы она не выдавалась за успешный шаг.
+        success = tool.name == "finish_task" or not result_indicates_failure(result)
+        observation = Observation(step=step_number, action=tool.name, result=observation_result, success=success, thought=step.thought)
         state.add_observation(observation)
         self.logger.write("tool_result", asdict(observation))
         self._emit("tool_result", asdict(observation))
 
-        if tool.name == "send_message":
-            msg_text = str(result.get("message") or "")
-            if msg_text:
-                state.add_chat_message("assistant", msg_text, thought=step.thought)
-                self._emit("intermediate_message", {"role": "assistant", "content": msg_text, "thought": step.thought})
-
         if tool.name == "finish_task" or step.done:
-            return str(result.get("summary") or step.summary or "Задача завершена")
+            summary = str(result.get("summary") or step.summary or "Задача завершена")
+            if tool.name == "finish_task" and result.get("attach_images") and image_urls:
+                summary = summary.rstrip() + "\n\n" + "\n".join(f"![image]({url})" for url in image_urls)
+            return summary
         return None
+
+    @staticmethod
+    def _extract_delegated_image_urls(result: dict[str, Any]) -> list[str]:
+        """Достаёт image_urls из compact-результата delegate_task (плоский словарь)
+        или delegate_parallel (список результатов в result['results'])."""
+        urls: list[str] = []
+        direct = result.get("image_urls")
+        if isinstance(direct, list):
+            urls.extend(str(u) for u in direct if isinstance(u, str) and u.strip())
+        nested = result.get("results")
+        if isinstance(nested, list):
+            for item in nested:
+                if isinstance(item, dict):
+                    item_urls = item.get("image_urls")
+                    if isinstance(item_urls, list):
+                        urls.extend(str(u) for u in item_urls if isinstance(u, str) and u.strip())
+        return urls
 
     def _emit(self, event: str, payload: dict[str, Any]) -> None:
         if self.event_sink is not None:

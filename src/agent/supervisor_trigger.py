@@ -1,7 +1,7 @@
-"""Автономный триггер директора по supervisor-алертам.
+"""Автономный триггер оператора по supervisor-алертам.
 
-Когда SupervisorLoop эмитит алерт, а директор не занят — этот модуль
-запускает один автономный шаг директора с системным сообщением о ситуации.
+Когда SupervisorLoop эмитит алерт, а оператор не занят — этот модуль
+запускает один автономный шаг оператора с системным сообщением о ситуации.
 """
 from __future__ import annotations
 
@@ -11,23 +11,23 @@ from typing import Any, Callable
 
 
 class SupervisorTrigger:
-    """Запускает директора автономно при получении supervisor-алерта.
+    """Запускает оператора автономно при получении supervisor-алерта.
 
     Принцип работы:
     - алерты накапливаются в очереди
-    - отдельный поток пытается запустить директора если он свободен
-    - если директор занят — алерт будет передан ему через supervisor_observations
+    - отдельный поток пытается запустить оператора если он свободен
+    - если оператор занят — алерт будет передан ему через supervisor_observations
     - кулдаун между автономными запусками — чтобы не заспамить
     """
 
     def __init__(
         self,
-        is_director_busy: Callable[[], bool],
-        run_director: Callable[[str], None],
+        is_operator_busy: Callable[[], bool],
+        run_operator: Callable[[str], None],
         cooldown: float = 60.0,
     ) -> None:
-        self._is_busy = is_director_busy
-        self._run_director = run_director
+        self._is_busy = is_operator_busy
+        self._run_operator = run_operator
         self._cooldown = cooldown
 
         self._pending: list[dict[str, Any]] = []
@@ -71,7 +71,7 @@ class SupervisorTrigger:
             self._pending.clear()
 
         if self._is_busy():
-            # Директор занят — алерты уже попадут через supervisor_observations
+            # Оператор занят — алерты уже попадут через supervisor_observations
             with self._lock:
                 # Возвращаем обратно чтобы не потерять, но не дублируем
                 pass
@@ -80,7 +80,7 @@ class SupervisorTrigger:
         message = self._build_message(alerts)
         self._last_trigger_time = now
         try:
-            self._run_director(message)
+            self._run_operator(message)
         except Exception:
             pass
 

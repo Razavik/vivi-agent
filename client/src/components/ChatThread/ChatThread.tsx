@@ -1,12 +1,21 @@
 import { useEffect, useRef, useState } from "react";
+import {
+	Bot,
+	Braces,
+	FolderSearch,
+	Sparkles,
+	TerminalSquare,
+} from "lucide-react";
 import styles from "./ChatThread.module.css";
 import { MessageRow } from "../MessageRow/MessageRow";
 import { ThoughtBlockInThread } from "../ThoughtBlockInThread/ThoughtBlockInThread";
 import { ToolBlock } from "../ToolBlock/ToolBlock";
 import ReactMarkdown from "react-markdown";
+import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { ChatEvent, PlanItem } from "../../types";
+import type { ChatEvent } from "../../types";
 import { isWindowsPath, openPath } from "../../utils/openPath";
+import { normalizeAssistantText } from "../../utils/renderText";
 
 interface ChatThreadProps {
 	events: ChatEvent[];
@@ -14,57 +23,48 @@ interface ChatThreadProps {
 	liveThought?: string;
 }
 
-const PLAN_ICONS: Record<string, string> = {
-	completed: "✓",
-	in_progress: "◌",
-	pending: "○",
-};
+const STARTER_CARDS = [
+	{
+		icon: FolderSearch,
+		title: "Разобрать проект",
+		text: "Проверить архитектуру, риски и места для улучшения.",
+	},
+	{
+		icon: TerminalSquare,
+		title: "Проверить запуск",
+		text: "Посмотреть backend, frontend и логи.",
+	},
+	{
+		icon: Braces,
+		title: "Внести правки",
+		text: "Описать задачу, а агент подберёт нужные шаги.",
+	},
+];
 
-function PlanBlock({ plan }: { plan: PlanItem[] }) {
-	if (!plan.length) return null;
-	const done = plan.filter((i) => i.status === "completed").length;
-	return (
-		<div className={styles.planBlock}>
-			<div className={styles.planHeader}>
-				<span className={styles.planLabel}>План</span>
-				<span className={styles.planCounter}>
-					{done} / {plan.length} tasks done
-				</span>
-			</div>
-			<div className={styles.planList}>
-				{plan.map((item) => (
-					<div key={item.id} className={`${styles.planItem} ${styles[item.status]}`}>
-						<span className={styles.planIcon}>{PLAN_ICONS[item.status] ?? "○"}</span>
-						<span className={styles.planContent}>{item.content}</span>
-					</div>
-				))}
-			</div>
-		</div>
-	);
-}
-
-export function ChatThread({ events, currentAnswer, liveThought }: ChatThreadProps) {
+export function ChatThread({
+	events,
+	currentAnswer,
+	liveThought,
+}: ChatThreadProps) {
 	const threadRef = useRef<HTMLDivElement>(null);
 	const [isAtBottom, setIsAtBottom] = useState(true);
 	const [visibleCount, setVisibleCount] = useState(50);
-	const MAX_INITIAL_MESSAGES = 50;
 	const LOAD_MORE_INCREMENT = 50;
 
 	// Сбрасываем visibleCount при новых сообщениях
-	useEffect(() => {
-		setVisibleCount(MAX_INITIAL_MESSAGES);
-	}, [events.length]);
-
 	const loadMore = () => {
 		setVisibleCount((prev) => prev + LOAD_MORE_INCREMENT);
 	};
 
-	const markdownComponents = {
-		pre({ children }: any) {
+	const markdownComponents: Components = {
+		pre({ children }) {
 			return <pre className={styles.codeBlock}>{children}</pre>;
 		},
-		code({ children, ...props }: any) {
-			const text = typeof children === "string" ? children : String(children ?? "");
+		code({ children, ...props }) {
+			const text =
+				typeof children === "string"
+					? children
+					: String(children ?? "");
 			if (isWindowsPath(text)) {
 				return (
 					<code
@@ -138,40 +138,99 @@ export function ChatThread({ events, currentAnswer, liveThought }: ChatThreadPro
 
 	// Ограничиваем количество отображаемых событий
 	const hasMoreMessages = groupedEvents.length > visibleCount;
-	const visibleEvents = hasMoreMessages ? groupedEvents.slice(-visibleCount) : groupedEvents;
+	const visibleEvents = hasMoreMessages
+		? groupedEvents.slice(-visibleCount)
+		: groupedEvents;
+	const isEmpty =
+		groupedEvents.length === 0 && !currentAnswer && !liveThought;
 
 	return (
 		<div ref={threadRef} className={styles.chatThread}>
+			{isEmpty && (
+				<div className={styles.emptyState}>
+					<div className={styles.emptyGlow} />
+					<div className={styles.emptyMark}>
+						<Bot size={30} />
+					</div>
+					<div className={styles.emptyEyebrow}>
+						<Sparkles size={14} />
+						<span>Agent 1 готов к задаче</span>
+					</div>
+					<h1 className={styles.emptyTitle}>
+						Что сегодня доведём до рабочего состояния?
+					</h1>
+					<p className={styles.emptyText}>
+						Опиши цель обычными словами. Можно попросить проверить
+						проект, найти баг, доработать клиент или аккуратно
+						пройтись по агентной системе.
+					</p>
+					<div className={styles.emptyCards}>
+						{STARTER_CARDS.map((card) => {
+							const Icon = card.icon;
+							return (
+								<div
+									key={card.title}
+									className={styles.emptyCard}
+								>
+									<div className={styles.emptyCardIcon}>
+										<Icon size={18} />
+									</div>
+									<div>
+										<div className={styles.emptyCardTitle}>
+											{card.title}
+										</div>
+										<div className={styles.emptyCardText}>
+											{card.text}
+										</div>
+									</div>
+								</div>
+							);
+						})}
+					</div>
+				</div>
+			)}
 			{hasMoreMessages && (
 				<button className={styles.loadMoreBtn} onClick={loadMore}>
-					Загрузить старые сообщения ({groupedEvents.length - visibleCount})
+					Загрузить старые сообщения (
+					{groupedEvents.length - visibleCount})
 				</button>
 			)}
 			{visibleEvents.map((group, groupIdx) => {
 				if (group.type === "user") {
-					return <MessageRow key={`user-${groupIdx}`} message={group.events[0]} />;
+					return (
+						<MessageRow
+							key={`user-${groupIdx}`}
+							message={group.events[0]}
+						/>
+					);
 				}
 
 				// Контейнер для событий ассистента
 				return (
-					<div key={`assistant-${groupIdx}`} className={styles.assistantGroup}>
+					<div
+						key={`assistant-${groupIdx}`}
+						className={styles.assistantGroup}
+					>
 						{group.events.map((event, idx) => {
 							switch (event.type) {
 								case "message":
-									if (event.plan && event.plan.length > 0 && !event.content) {
-										return <PlanBlock key={idx} plan={event.plan} />;
-									}
 									return (
 										<div
 											key={idx}
 											className={`${styles.eventRow} ${styles.answerBlock}`}
 										>
-											<div className={styles.eventContent}>
+											<div
+												className={styles.eventContent}
+											>
 												<ReactMarkdown
 													remarkPlugins={[remarkGfm]}
-													components={markdownComponents}
+													components={
+														markdownComponents
+													}
 												>
-													{event.content}
+													{normalizeAssistantText(
+														event.content || "",
+													)}
 												</ReactMarkdown>
 											</div>
 										</div>
@@ -202,7 +261,11 @@ export function ChatThread({ events, currentAnswer, liveThought }: ChatThreadPro
 			})}
 			{liveThought && (
 				<div className={styles.assistantGroup}>
-					<ThoughtBlockInThread thought={liveThought} id="live-thought" streaming />
+					<ThoughtBlockInThread
+						thought={liveThought}
+						id="live-thought"
+						streaming
+					/>
 				</div>
 			)}
 			{currentAnswer && (
@@ -213,7 +276,7 @@ export function ChatThread({ events, currentAnswer, liveThought }: ChatThreadPro
 								remarkPlugins={[remarkGfm]}
 								components={markdownComponents}
 							>
-								{currentAnswer}
+								{normalizeAssistantText(currentAnswer)}
 							</ReactMarkdown>
 						</div>
 					</div>

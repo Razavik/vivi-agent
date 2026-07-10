@@ -1,29 +1,71 @@
 import { useRef } from "react";
+import {
+	ImagePlus,
+	SendHorizontal,
+	Square,
+	Trash2,
+	X,
+} from "lucide-react";
 import styles from "./Composer.module.css";
 import { LiveStatus } from "../LiveStatus/LiveStatus";
+import { Select } from "../Select/Select";
+
+interface ModelOption {
+	value: string;
+	label: string;
+}
 
 interface ComposerProps {
 	task: string;
 	images: string[];
+	contextTokens: number;
+	contextLimit: number;
+	selectedModel: string;
+	modelOptions: ModelOption[];
+	onClearHistory: () => void;
+	onClearLogs: () => void;
+	onModelChange: (value: string) => void;
 	onTaskChange: (value: string) => void;
 	onImagesChange: (images: string[]) => void;
 	onRun: () => void;
 	onStop: () => void;
 	isRunning: boolean;
 	liveStatus: string;
+	pcControlMode: boolean;
+	onPcControlModeChange: (enabled: boolean) => void;
 }
 
 export function Composer({
 	task,
 	images,
+	contextTokens,
+	contextLimit,
+	selectedModel,
+	modelOptions,
+	onClearHistory,
+	onClearLogs,
+	onModelChange,
 	onTaskChange,
 	onImagesChange,
 	onRun,
 	onStop,
 	isRunning,
 	liveStatus,
+	pcControlMode,
+	onPcControlModeChange,
 }: ComposerProps) {
 	const fileInputRef = useRef<HTMLInputElement>(null);
+	const tokenPercent = Math.max(
+		0,
+		Math.min(
+			100,
+			Math.round((contextTokens / Math.max(contextLimit, 1)) * 100),
+		),
+	);
+	const selectedModelLabel =
+		modelOptions.find((opt) => opt.value === selectedModel)?.label ||
+		selectedModel ||
+		"Выбрать модель";
 
 	const readFilesAsBase64 = (files: File[]): Promise<string[]> => {
 		const imageFiles = files.filter((f) => f.type.startsWith("image/"));
@@ -32,7 +74,8 @@ export function Composer({
 				(file) =>
 					new Promise<string>((resolve) => {
 						const reader = new FileReader();
-						reader.onload = () => resolve((reader.result as string).split(",")[1]);
+						reader.onload = () =>
+							resolve((reader.result as string).split(",")[1]);
 						reader.readAsDataURL(file);
 					}),
 			),
@@ -54,14 +97,16 @@ export function Composer({
 
 	const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
 		const items = Array.from(e.clipboardData.items);
-		const imageItems = items.filter((item) => item.type.startsWith("image/"));
+		const imageItems = items.filter((item) =>
+			item.type.startsWith("image/"),
+		);
 		if (imageItems.length === 0) return;
 		e.preventDefault();
 		const readers = imageItems.map(
 			(item) =>
 				new Promise<string>((resolve) => {
 					const file = item.getAsFile();
-					if (!file) return;
+					if (!file) return resolve("");
 					const reader = new FileReader();
 					reader.onload = () => {
 						const result = reader.result as string;
@@ -93,7 +138,7 @@ export function Composer({
 									onClick={() => removeImage(idx)}
 									title="Удалить"
 								>
-									×
+									<X size={12} />
 								</button>
 							</div>
 						))}
@@ -108,63 +153,150 @@ export function Composer({
 						style={{ display: "none" }}
 						onChange={handleFileChange}
 					/>
-					<textarea
-						value={task}
-						onChange={(e) => onTaskChange(e.target.value)}
-						placeholder="Введите запрос..."
-						onKeyDown={(e) => {
-							if (e.key === "Enter" && !e.shiftKey && !isRunning) {
-								e.preventDefault();
-								onRun();
-							}
-						}}
-						onPaste={handlePaste}
-					/>
-					<button
-						className={styles.attachBtn}
-						onClick={() => fileInputRef.current?.click()}
-						title="Прикрепить изображение"
-						disabled={isRunning}
-					>
-						<svg
-							width="18"
-							height="18"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							strokeWidth="2"
-							strokeLinecap="round"
-							strokeLinejoin="round"
-						>
-							<rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-							<circle cx="8.5" cy="8.5" r="1.5" />
-							<polyline points="21 15 16 10 5 21" />
-						</svg>
-					</button>
-					<button className={styles.sendBtn} onClick={isRunning ? onStop : onRun}>
-						{isRunning ? (
-							<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-								<rect x="6" y="6" width="12" height="12" />
-							</svg>
-						) : (
-							<svg
-								width="16"
-								height="16"
-								viewBox="0 0 24 24"
-								fill="none"
-								stroke="currentColor"
-								strokeWidth="3"
-								strokeLinecap="round"
-								strokeLinejoin="round"
+					<div className={styles.textareaWrapper}>
+						<textarea
+							value={task}
+							onChange={(e) => onTaskChange(e.target.value)}
+							placeholder="Введите запрос..."
+							onKeyDown={(e) => {
+								if (
+									e.key === "Enter" &&
+									!e.shiftKey &&
+									!isRunning
+								) {
+									e.preventDefault();
+									onRun();
+								}
+							}}
+							onPaste={handlePaste}
+						/>
+					</div>
+					<div className={styles.buttonsWrapper}>
+						<div className={styles.controlStrip}>
+							<div className={styles.actionGroup}>
+								<button
+									className={`${styles.actionBtn} ${styles.clearButton}`}
+									onClick={() => {
+										onClearHistory();
+										onClearLogs();
+									}}
+									disabled={isRunning}
+									title="Очистить историю и логи"
+								>
+									<Trash2 size={15} />
+									Очистить всё
+								</button>
+								<label
+									className={styles.pcModeToggle}
+									title="Режим управления ПК"
+								>
+									<input
+										type="checkbox"
+										checked={pcControlMode}
+										onChange={(e) =>
+											onPcControlModeChange(
+												e.target.checked,
+											)
+										}
+									/>
+									<span className={styles.pcModeTextGroup}>
+										<span className={styles.pcModeLabel}>
+											ПК
+										</span>
+									</span>
+									<span className={styles.pcModeSwitch}>
+										<span className={styles.pcModeThumb} />
+									</span>
+								</label>
+								<div className={styles.modelMenuWrap}>
+									<Select
+										value={selectedModel}
+										onChange={onModelChange}
+										options={modelOptions}
+										placeholder={selectedModelLabel}
+										className={styles.modelSelect}
+										style={{
+											width: "156px",
+											minWidth: "156px",
+											maxWidth: "156px",
+										}}
+									/>
+								</div>
+							</div>
+						</div>
+						<div className={styles.rightControls}>
+							<button
+								className={styles.attachCircleBtn}
+								onClick={() => fileInputRef.current?.click()}
+								title="Прикрепить изображение"
+								disabled={isRunning}
 							>
-								<path d="M5 12h14M12 5l7 7-7 7" />
-							</svg>
-						)}
-					</button>
+								<ImagePlus size={20} />
+							</button>
+							<div className={styles.contextOrbGroup}>
+								<button
+									type="button"
+									className={styles.contextOrb}
+									style={{
+										["--context-fill" as string]: `${tokenPercent}%`,
+									}}
+									aria-label={`Контекстное окно ${tokenPercent} процентов`}
+									title="Контекстное окно"
+								>
+									<span className={styles.contextOrbInner}>
+										<span
+											className={styles.contextOrbValue}
+										>
+										</span>
+									</span>
+								</button>
+								<div
+									className={styles.contextTooltip}
+									role="status"
+									aria-live="polite"
+								>
+									<div className={styles.contextTooltipTitle}>
+										Контекстное окно
+									</div>
+									<div
+										className={styles.contextTooltipPercent}
+									>
+										{tokenPercent}% заполнено
+									</div>
+									<div className={styles.contextTooltipScale}>
+										<div
+											className={
+												styles.contextTooltipScaleFill
+											}
+											style={{
+												width: `${tokenPercent}%`,
+											}}
+										/>
+									</div>
+									<div
+										className={styles.contextTooltipTokens}
+									>
+										{contextTokens > 0 &&
+											`Использовано ${contextTokens.toLocaleString()} токенов`}
+									</div>
+								</div>
+							</div>
+							<button
+								className={styles.sendBtn}
+								onClick={isRunning ? onStop : onRun}
+							>
+								{isRunning ? (
+									<Square size={16} fill="currentColor" />
+								) : (
+									<SendHorizontal size={16} />
+								)}
+							</button>
+						</div>
+					</div>
 				</div>
 			</div>
 			<div className={styles.hint}>
-				Agent 1 может допускать ошибки. Проверяйте важную информацию.
+				Agent 1 может допускать ошибки. Проверяй важную информацию.
 			</div>
 		</div>
 	);
