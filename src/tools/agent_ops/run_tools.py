@@ -49,7 +49,7 @@ class RunTools:
 
     def get_world_state(self, args: dict[str, Any]) -> dict[str, Any]:
         """Получить структурированный снимок состояния всей системы."""
-        from src.agent.world_state import WorldState
+        from src.agent.supervision.world_state import WorldState
         ws = WorldState(self.ctx.run_registry)
         return ws.snapshot()
 

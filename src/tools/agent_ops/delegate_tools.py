@@ -4,9 +4,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable
 from uuid import uuid4
 
-from src.agent.agent_registry import AgentRegistry
-from src.agent.run_control import RunController
-from src.agent.schemas import SubAgentResult
+from src.agent.core.schemas import SubAgentResult
+from src.agent.lifecycle.agent_registry import AgentRegistry
+from src.agent.lifecycle.run_control import RunController
 from src.infra.errors import ToolExecutionError
 
 

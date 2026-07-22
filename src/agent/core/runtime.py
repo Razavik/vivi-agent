@@ -2,27 +2,28 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from dataclasses import asdict
 from typing import Any, Callable
 from uuid import uuid4
 
-from src.agent.schemas import ActionStep
-from src.agent.events import normalize_event
-from src.agent.state import ChatMessage, Observation, PlanItem, SessionState
+from src.agent.core.schemas import ActionStep
+from src.agent.core.state import ChatMessage, Observation, PlanItem, SessionState
+from src.agent.messaging.events import normalize_event
 from src.infra.chat_memory import ChatMemoryStore
 from src.infra.errors import AgentError, ToolExecutionError
 from src.infra.logging import SessionLogger
-from src.llm.ollama_client import OllamaClient
+from src.llm.client_factory import LLMClient
 from src.llm.prompt_builder import build_messages
 from src.safety.policy import SafetyPolicy
 from src.safety.validator import ActionValidator
-from src.tools.registry import ToolRegistry, result_indicates_failure
+from src.tools.core.registry import ToolRegistry, result_indicates_failure
 
 
 class AgentRuntime:
     def __init__(
         self,
-        client: OllamaClient,
+        client: LLMClient,
         registry: ToolRegistry,
         validator: ActionValidator,
         policy: SafetyPolicy,
@@ -63,6 +64,12 @@ class AgentRuntime:
         self.get_supervisor_observations = get_supervisor_observations
         self._current_state: SessionState | None = None
         self._base_history: list[dict[str, Any]] = []
+        # Очистка истории может прийти в коротком окне после session_finished,
+        # пока поток runtime ещё дописывает финальный снимок. Один lock для
+        # смены базы и записи снимка не даёт старому запуску воскресить чат.
+        self._memory_lock = threading.RLock()
+        self._memory_epoch = 0
+        self._preferred_agents: list[str] = []
         self.settings = settings
 
     def cancel(self) -> None:
@@ -73,8 +80,32 @@ class AgentRuntime:
         except Exception:
             pass
 
-    def run(self, user_goal: str, chat_history: list[dict[str, str]] | None = None, images: list[str] | None = None) -> str:
+    def clear_persisted_history(self) -> None:
+        """Атомарно очищает память, используемую текущим запуском.
+
+        Недостаточно очистить только файл: между ``memory_store.clear()`` и
+        сбросом ``_base_history`` runtime может успеть записать снапшот со
+        старым префиксом. Этот метод сериализует оба действия с записью
+        снапшотов и также убирает прошлый контекст из уже идущего запуска.
+        """
+        with self._memory_lock:
+            self._memory_epoch += 1
+            self._base_history = []
+            if self._current_state is not None:
+                self._current_state.memory_chat_history.clear()
+            self.memory_store.clear()
+
+    def run(
+        self,
+        user_goal: str,
+        chat_history: list[dict[str, str]] | None = None,
+        images: list[str] | None = None,
+        preferred_agents: list[str] | None = None,
+    ) -> str:
         self.cancelled = False
+        # Валидируем на входе, а не в промпт-билдере: имена, которых нет среди
+        # реально доступных сабагентов, не должны попадать в подсказку модели.
+        self._preferred_agents = self._filter_preferred_agents(preferred_agents, self.available_agents)
         try:
             self.client.reset_cancel_request()
         except Exception:
@@ -90,35 +121,42 @@ class AgentRuntime:
         # Стабильный run_id для сохранения артефактов-картинок оператора (у
         # оператора нет собственного run_id, в отличие от делегированных run).
         operator_run_id = str(uuid4())
+        # Запоминаем поколение до чтения: ручная очистка, случившаяся между
+        # чтением файла и первым снапшотом, не должна вернуть старый контекст
+        # ни в prompt, ни на диск.
+        with self._memory_lock:
+            memory_epoch = self._memory_epoch
         memory = self.memory_store.load()
-        for item in memory.get("chat_history", []):
-            role = item.get("role")
-            content = item.get("content")
-            thought = item.get("thought")
-            raw_plan = item.get("plan")
-            interrupted_by_user = bool(item.get("interrupted_by_user"))
-            if isinstance(role, str) and isinstance(content, str):
-                plan_items: list[PlanItem] = []
-                if isinstance(raw_plan, list):
-                    for plan_item in raw_plan:
-                        if not isinstance(plan_item, dict):
-                            continue
-                        item_id = plan_item.get("id")
-                        item_content = plan_item.get("content")
-                        item_status = plan_item.get("status")
-                        if isinstance(item_id, str) and isinstance(item_content, str) and isinstance(item_status, str):
-                            plan_items.append(PlanItem(id=item_id, content=item_content, status=item_status))
-                state.memory_chat_history.append(
-                    ChatMessage(
-                        role=role,
-                        content=content,
-                        thought=thought if isinstance(thought, str) else None,
-                        plan=plan_items,
-                        interrupted_by_user=interrupted_by_user,
-                    )
-                )
-                if role == "assistant" and plan_items:
-                    state.set_plan(plan_items)
+        with self._memory_lock:
+            if memory_epoch == self._memory_epoch:
+                for item in memory.get("chat_history", []):
+                    role = item.get("role")
+                    content = item.get("content")
+                    thought = item.get("thought")
+                    raw_plan = item.get("plan")
+                    interrupted_by_user = bool(item.get("interrupted_by_user"))
+                    if isinstance(role, str) and isinstance(content, str):
+                        plan_items: list[PlanItem] = []
+                        if isinstance(raw_plan, list):
+                            for plan_item in raw_plan:
+                                if not isinstance(plan_item, dict):
+                                    continue
+                                item_id = plan_item.get("id")
+                                item_content = plan_item.get("content")
+                                item_status = plan_item.get("status")
+                                if isinstance(item_id, str) and isinstance(item_content, str) and isinstance(item_status, str):
+                                    plan_items.append(PlanItem(id=item_id, content=item_content, status=item_status))
+                        state.memory_chat_history.append(
+                            ChatMessage(
+                                role=role,
+                                content=content,
+                                thought=thought if isinstance(thought, str) else None,
+                                plan=plan_items,
+                                interrupted_by_user=interrupted_by_user,
+                            )
+                        )
+                        if role == "assistant" and plan_items:
+                            state.set_plan(plan_items)
         if chat_history:
             for item in chat_history:
                 role = item.get("role")
@@ -126,9 +164,12 @@ class AgentRuntime:
                 if isinstance(role, str) and isinstance(content, str):
                     state.chat_history.append(ChatMessage(role=role, content=content))
         state.add_chat_message("user", user_goal)
-        base_history: list[dict] = self.memory_store.load().get("chat_history", [])
-        self._base_history = base_history
-        self._write_memory_snapshot(base_history, state.chat_history, state.observations)
+        with self._memory_lock:
+            if memory_epoch == self._memory_epoch:
+                self._base_history = self.memory_store.load().get("chat_history", [])
+            else:
+                self._base_history = []
+        self._write_memory_snapshot(state.chat_history, state.observations)
         self.logger.write("session_started", {"goal": user_goal})
         self._emit("session_started", {"goal": user_goal})
         last_actions: list[tuple[str, str]] = []  # для loop detection оператора
@@ -143,14 +184,14 @@ class AgentRuntime:
             if self.cancelled:
                 self.logger.write("cancelled", {"step": step_number})
                 self._add_assistant_message_once(state, "", interrupted_by_user=True)
-                self._write_memory_snapshot(base_history, state.chat_history, state.observations)
+                self._write_memory_snapshot(state.chat_history, state.observations)
                 self._emit("cancelled", {"step": step_number})
                 return ""
             try:
                 active_runs = self.get_active_runs() if self.get_active_runs else []
                 supervisor_obs = self.get_supervisor_observations() if self.get_supervisor_observations else []
                 images_for_step = extracted_images if extracted_images else None
-                messages, token_count = build_messages(state, self.registry.describe_all(), self.workspace_root, self.user_name, self.available_agents, images=images_for_step, active_runs=active_runs, supervisor_observations=supervisor_obs, user_profile=self.settings.user_profile)
+                messages, token_count = build_messages(state, self.registry.describe_all(), self.workspace_root, self.user_name, self.available_agents, images=images_for_step, active_runs=active_runs, supervisor_observations=supervisor_obs, user_profile=self.settings.user_profile, preferred_agents=self._preferred_agents)
                 if images_for_step:
                     extracted_images = []
                 self._emit("context_tokens", {"count": token_count})
@@ -172,10 +213,7 @@ class AgentRuntime:
                         ChatMessage(role="assistant", content=summary, plan=state.plan),
                     ]
                     self._write_memory_snapshot(
-                        base_history,
-                        live_chat_history,
-                        state.observations,
-                        self.client.model,
+                        live_chat_history, state.observations, self.client.model
                     )
                     self._emit("assistant_stream", {"content": summary})
 
@@ -223,6 +261,11 @@ class AgentRuntime:
                 if native_thought:
                     step_dict["thought"] = native_thought
                     step_dict["thought_source"] = "native"
+                elif step_dict.get("thought"):
+                    # Модель без отдельного канала reasoning (нет native_thought) —
+                    # показываем её собственное поле thought из JSON-ответа как блок
+                    # размышления, вместо того чтобы молча его выбрасывать.
+                    step_dict["thought_source"] = "self"
                 else:
                     step_dict.pop("thought", None)
                 self.logger.write("llm_step", step_dict)
@@ -259,11 +302,11 @@ class AgentRuntime:
                         summary,
                         thought=native_thought or current_step.thought,
                     )
-                    self._write_memory_snapshot(base_history, state.chat_history, state.observations)
+                    self._write_memory_snapshot(state.chat_history, state.observations)
                     self.logger.write("session_finished", {"summary": summary})
                     self._emit("session_finished", {"summary": summary})
                     return summary
-                self._write_memory_snapshot(base_history, state.chat_history, state.observations)
+                self._write_memory_snapshot(state.chat_history, state.observations)
                 state.consecutive_errors = 0
                 current_step = None
             except AgentError as exc:
@@ -279,7 +322,7 @@ class AgentRuntime:
                     )
                 state.live_answer = ""
                 if self.cancelled:
-                    self._write_memory_snapshot(base_history, state.chat_history, state.observations)
+                    self._write_memory_snapshot(state.chat_history, state.observations)
                     self.logger.write("cancelled", {"step": step_number})
                     self._emit("cancelled", {"step": step_number, "summary": partial_answer})
                     return partial_answer
@@ -293,7 +336,7 @@ class AgentRuntime:
                         thought=current_step.thought if current_step else None,
                     )
                 )
-                self._write_memory_snapshot(base_history, state.chat_history, state.observations)
+                self._write_memory_snapshot(state.chat_history, state.observations)
                 if state.consecutive_errors > self.max_consecutive_errors:
                     summary = f"Сессия остановлена после повторяющихся ошибок: {exc}"
                     state.live_answer = ""
@@ -302,14 +345,14 @@ class AgentRuntime:
                         summary,
                         thought=current_step.thought if current_step else None,
                     )
-                    self._write_memory_snapshot(base_history, state.chat_history, state.observations)
+                    self._write_memory_snapshot(state.chat_history, state.observations)
                     self._emit("session_finished", {"summary": summary})
                     return summary
                 current_step = None
         summary = "Сессия остановлена: достигнут лимит шагов"
         state.live_answer = ""
         self._add_assistant_message_once(state, summary)
-        self._write_memory_snapshot(base_history, state.chat_history, state.observations)
+        self._write_memory_snapshot(state.chat_history, state.observations)
         self._emit("session_finished", {"summary": summary})
         return summary
 
@@ -363,23 +406,22 @@ class AgentRuntime:
                 else:
                     live_chat_history[-1].interrupted_by_user = True
             self._write_memory_snapshot(
-                self._base_history,
-                live_chat_history,
-                state.observations,
-                self.client.model,
+                live_chat_history, state.observations, self.client.model
             )
         except Exception:
             pass
 
     def _write_memory_snapshot(
         self,
-        base_history: list[dict[str, Any]],
         chat_history: list[ChatMessage],
         observations: list[Observation],
         model: str | None = None,
     ) -> bool:
         try:
-            self.memory_store.write_snapshot(base_history, chat_history, observations, model)
+            with self._memory_lock:
+                self.memory_store.write_snapshot(
+                    list(self._base_history), chat_history, observations, model
+                )
             return True
         except Exception as exc:
             try:
@@ -481,6 +523,19 @@ class AgentRuntime:
                     if isinstance(item_urls, list):
                         urls.extend(str(u) for u in item_urls if isinstance(u, str) and u.strip())
         return urls
+
+    @staticmethod
+    def _filter_preferred_agents(
+        preferred_agents: list[str] | None,
+        available_agents: list[dict[str, str]],
+    ) -> list[str]:
+        """Оставляет только реально доступные имена сабагентов из
+        preferred_agents (сессионная подсказка от пользователя из UI) — имя,
+        которого нет среди available_agents, не должно попасть в промпт модели."""
+        if not preferred_agents:
+            return []
+        available_names = {str(agent.get("name", "")) for agent in available_agents}
+        return [name for name in preferred_agents if name in available_names]
 
     def _emit(self, event: str, payload: dict[str, Any]) -> None:
         if self.event_sink is not None:

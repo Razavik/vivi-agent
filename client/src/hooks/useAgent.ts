@@ -120,6 +120,10 @@ export function useAgent() {
 		useState<ConfirmationRequest | null>(null);
 	const [contextTokens, setContextTokens] = useState(0);
 	const [contextLimit, setContextLimit] = useState(32768);
+	// По умолчанию true — чтобы при первой загрузке (пока /api/runtime-config
+	// ещё не ответил) не мигать ложной блокировкой отправки, если пользователь
+	// уже успел прикрепить картинку.
+	const [modelSupportsVision, setModelSupportsVision] = useState(true);
 	const [selectedModel, setSelectedModel] = useState("");
 	const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
 	const [subAgentPanes, setSubAgentPanes] = useState<SubAgentPane[]>([]);
@@ -130,15 +134,35 @@ export function useAgent() {
 	const operatorWsRef = useRef<WebSocket | null>(null);
 	const operatorEventSeqRef = useRef(0);
 	const currentAnswerRef = useRef("");
+	// "Поколение" пользовательского выбора модели — см. updateSelectedModel
+	// и loadModelConfig: защита от того, что более старый в полёте сетевой
+	// ответ откатывает UI после более свежего клика.
+	const modelChangeSeqRef = useRef(0);
+	const modelChangeTimerRef = useRef<number | null>(null);
+	const modelPersistedRef = useRef("");
+
+	useEffect(() => {
+		return () => {
+			if (modelChangeTimerRef.current !== null) {
+				window.clearTimeout(modelChangeTimerRef.current);
+			}
+		};
+	}, []);
 
 	const loadRuntimeConfig = useCallback(async () => {
 		try {
 			const response = await fetch("/api/runtime-config");
 			if (!response.ok) return;
-			const data = await readJson<{ num_ctx?: number }>(response, {});
+			const data = await readJson<{
+				num_ctx?: number;
+				model_supports_vision?: boolean;
+			}>(response, {});
 			const limit = Number(data.num_ctx);
 			if (Number.isFinite(limit) && limit > 0) {
 				setContextLimit(limit);
+			}
+			if (typeof data.model_supports_vision === "boolean") {
+				setModelSupportsVision(data.model_supports_vision);
 			}
 		} catch {
 			// ignore runtime config errors
@@ -146,6 +170,12 @@ export function useAgent() {
 	}, []);
 
 	const loadModelConfig = useCallback(async () => {
+		// seqAtStart фиксирует "поколение" пользовательского выбора модели на
+		// момент запуска. Если за время в полёте (особенно /api/ollama-models
+		// с таймаутом до 5с) пользователь successfully кликнул другую модель
+		// (см. updateSelectedModel, тоже бампает modelChangeSeqRef), этот
+		// более старый ответ не должен откатывать UI на устаревшее значение.
+		const seqAtStart = modelChangeSeqRef.current;
 		try {
 			const [modelsResponse, availableResponse, ollamaResponse] =
 				await Promise.all([
@@ -159,6 +189,7 @@ export function useAgent() {
 						default?: string;
 						models?: Record<string, string>;
 						custom_models?: string[];
+						disabled_models?: string[];
 					}>(modelsResponse, {})
 				: {};
 			const availableData = availableResponse.ok
@@ -172,8 +203,12 @@ export function useAgent() {
 				modelsData.models?.operator?.trim() ||
 				modelsData.default?.trim() ||
 				"";
-			setSelectedModel(currentModel);
+			if (modelChangeSeqRef.current === seqAtStart) {
+				setSelectedModel(currentModel);
+				modelPersistedRef.current = currentModel;
+			}
 
+			const disabledModels = new Set(modelsData.disabled_models || []);
 			const allModels = Array.from(
 				new Set(
 					[
@@ -185,7 +220,7 @@ export function useAgent() {
 						.map((item) => item.trim())
 						.filter(Boolean),
 				),
-			);
+			).filter((model) => model === currentModel || !disabledModels.has(model));
 			setModelOptions(
 				allModels.map((model) => ({
 					value: model,
@@ -221,10 +256,10 @@ export function useAgent() {
 				console.error("Не удалось загрузить историю с сервера");
 				return;
 			}
-			const data = await readJson<{ chat_history?: any[] }>(
-				historyResponse,
-				{},
-			);
+			const data = await readJson<{
+				chat_history?: any[];
+				context_tokens_estimate?: number;
+			}>(historyResponse, {});
 			const monitorState = monitorResponse.ok
 				? await readJson<MonitorState>(monitorResponse, {})
 				: {};
@@ -308,6 +343,14 @@ export function useAgent() {
 			}
 			eventsRef.current = historyEvents;
 			setEvents(historyEvents);
+			// Индикатор "Контекстное окно" иначе показывает 0% сразу после
+			// перезагрузки страницы: реальное значение приходит только SSE-событием
+			// context_tokens во время активного шага и нигде не персистится. Пока
+			// запуск не активен, подставляем оценку по сохранённой истории —
+			// как только начнётся реальный шаг, SSE-событие её перезапишет точным числом.
+			if (!monitorState.running && typeof data.context_tokens_estimate === "number") {
+				setContextTokens(data.context_tokens_estimate);
+			}
 		} catch (e) {
 			console.error("Ошибка загрузки истории:", e);
 		}
@@ -437,6 +480,29 @@ export function useAgent() {
 		}
 	}, []);
 
+	type CompressMemoryResult = {
+		compressed: boolean;
+		before_count?: number;
+		after_count?: number;
+		reason?: string;
+		error?: string;
+	};
+
+	const compressMemory =
+		useCallback(async (): Promise<CompressMemoryResult> => {
+			const response = await fetch("/api/history/compress", {
+				method: "POST",
+			});
+			const result = await readJson<CompressMemoryResult>(response, {
+				compressed: false,
+				error: "Не удалось сжать историю",
+			});
+			if (result.compressed) {
+				await loadHistory();
+			}
+			return result;
+		}, [loadHistory]);
+
 	// Очищает живое состояние панелей саб-агентов (subAgentPanes живёт здесь,
 	// на уровне App, а не в AgentChatPage). Без этого AgentChatPage мог очистить
 	// только историю на диске (/api/agents/*/clear) — buildPaneList всё равно
@@ -450,37 +516,68 @@ export function useAgent() {
 	}, []);
 
 	const updateSelectedModel = useCallback(
-		async (model: string) => {
-			try {
-				const response = await fetch("/api/models");
-				const modelsData = response.ok
-					? await readJson<{
-							models?: Record<string, string>;
-							custom_models?: string[];
-						}>(response, {})
-					: {};
-				const nextModels = {
-					...(modelsData.models || {}),
-					operator: model,
-				};
-				const saveResponse = await fetch("/api/models", {
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({
-						models: nextModels,
-						custom_models: modelsData.custom_models || [],
-					}),
-				});
-				if (!saveResponse.ok) {
-					throw new Error("Не удалось сохранить модель");
-				}
-				setSelectedModel(model);
-				await loadModelConfig();
-			} catch (error) {
-				console.error("Не удалось обновить модель:", error);
+		(model: string) => {
+			// Оптимистичное обновление — переключение в UI (подсветка, чип)
+			// происходит сразу по клику, на каждый клик, без исключений.
+			setSelectedModel(model);
+
+			// А вот реальное сохранение на бэкенд — с debounce: при быстром
+			// переключении (ползунок уровня мышления, смена базовой модели)
+			// каждый клик раньше запускал свой independent GET+POST+
+			// loadModelConfig() (тот ещё и живой /api/ollama-models до 5с),
+			// и эти ответы прилетали вразнобой — более старый мог прийти
+			// позже нового и откатить UI на промежуточное значение, а клики
+			// визуально "доезжали" с задержкой один за другим. Сохраняем
+			// только финальный выбор после паузы; modelChangeSeqRef
+			// дополнительно страхует, если что-то всё же окажется в полёте.
+			if (modelChangeTimerRef.current !== null) {
+				window.clearTimeout(modelChangeTimerRef.current);
 			}
+			const seq = ++modelChangeSeqRef.current;
+			modelChangeTimerRef.current = window.setTimeout(() => {
+				void (async () => {
+					try {
+						const response = await fetch("/api/models");
+						const modelsData = response.ok
+							? await readJson<{
+									models?: Record<string, string>;
+									custom_models?: string[];
+								}>(response, {})
+							: {};
+						if (modelChangeSeqRef.current !== seq) return;
+						const nextModels = {
+							...(modelsData.models || {}),
+							operator: model,
+						};
+						const saveResponse = await fetch("/api/models", {
+							method: "POST",
+							headers: { "Content-Type": "application/json" },
+							body: JSON.stringify({
+								models: nextModels,
+								custom_models: modelsData.custom_models || [],
+							}),
+						});
+						if (modelChangeSeqRef.current !== seq) return;
+						if (!saveResponse.ok) {
+							throw new Error("Не удалось сохранить модель");
+						}
+						modelPersistedRef.current = model;
+						void loadModelConfig();
+						// Контекстное окно (num_ctx) и поддержка vision зависят
+						// от того, какая именно модель сейчас у оператора —
+						// без этого они оставались бы от предыдущей модели
+						// вплоть до следующей перезагрузки страницы.
+						void loadRuntimeConfig();
+					} catch (error) {
+						console.error("Не удалось обновить модель:", error);
+						if (modelChangeSeqRef.current === seq) {
+							setSelectedModel(modelPersistedRef.current);
+						}
+					}
+				})();
+			}, 350);
 		},
-		[loadModelConfig],
+		[loadModelConfig, loadRuntimeConfig],
 	);
 
 	const respondToConfirmation = useCallback(
@@ -509,7 +606,11 @@ export function useAgent() {
 	const wsRef = useRef<WebSocket | null>(null);
 
 	const runTask = useCallback(
-		async (task: string, images: string[] = []) => {
+		async (
+			task: string,
+			images: string[] = [],
+			preferredAgents: string[] = [],
+		) => {
 			if (!task.trim() && images.length === 0) return;
 
 			// Закрываем предыдущее соединение
@@ -574,6 +675,10 @@ export function useAgent() {
 							action: "run",
 							task,
 							images: images.length > 0 ? images : undefined,
+							preferred_agents:
+								preferredAgents.length > 0
+									? preferredAgents
+									: undefined,
 						}),
 					);
 				};
@@ -773,6 +878,7 @@ export function useAgent() {
 		confirmationRequest,
 		contextTokens,
 		contextLimit,
+		modelSupportsVision,
 		selectedModel,
 		modelOptions,
 		updateSelectedModel,
@@ -782,6 +888,7 @@ export function useAgent() {
 		loadHistory,
 		clearHistory,
 		clearLogs,
+		compressMemory,
 		clearSubAgentPanes,
 		respondToConfirmation,
 	};

@@ -1,9 +1,6 @@
 import {
-	Activity,
-	AlertTriangle,
 	Bot,
 	BookOpen,
-	ChartNoAxesColumnIncreasing,
 	Cpu,
 	MessageSquare,
 	Settings,
@@ -17,17 +14,13 @@ export type NavPage =
 	| "tools"
 	| "models"
 	| "skills"
-	| "settings"
-	| "runs"
-	| "bus"
-	| "crashes";
+	| "settings";
 
 interface NavBarProps {
 	activePage: NavPage;
 	onNavigate: (page: NavPage) => void;
 	hasActiveAgents: boolean;
 	alertCount?: number;
-	developerMode: boolean;
 	pcControlMode: boolean;
 }
 
@@ -38,7 +31,6 @@ export function NavBar({
 	onNavigate,
 	hasActiveAgents,
 	alertCount = 0,
-	developerMode,
 	pcControlMode,
 }: NavBarProps) {
 	return (
@@ -66,15 +58,6 @@ export function NavBar({
 			</button>
 			<button className={`${styles.navBtn} ${activePage === "skills" ? styles.active : ""}`} onClick={() => onNavigate("skills")} title="Скиллы">
 				<BookOpen size={ICON_SIZE} />
-			</button>
-			<button className={`${styles.navBtn} ${activePage === "runs" ? styles.active : ""} ${developerMode ? "" : styles.hidden}`} onClick={() => onNavigate("runs")} title="Runs Dashboard" aria-hidden={!developerMode} tabIndex={developerMode ? 0 : -1}>
-				<ChartNoAxesColumnIncreasing size={ICON_SIZE} />
-			</button>
-			<button className={`${styles.navBtn} ${activePage === "bus" ? styles.active : ""} ${developerMode ? "" : styles.hidden}`} onClick={() => onNavigate("bus")} title="MessageBus" aria-hidden={!developerMode} tabIndex={developerMode ? 0 : -1}>
-				<Activity size={ICON_SIZE} />
-			</button>
-			<button className={`${styles.navBtn} ${activePage === "crashes" ? styles.active : ""} ${developerMode ? "" : styles.hidden}`} onClick={() => onNavigate("crashes")} title="Crash Reports" aria-hidden={!developerMode} tabIndex={developerMode ? 0 : -1}>
-				<AlertTriangle size={ICON_SIZE} />
 			</button>
 			<div className={styles.spacer} />
 			<button className={`${styles.navBtn} ${activePage === "settings" ? styles.active : ""}`} onClick={() => onNavigate("settings")} title="Настройки">

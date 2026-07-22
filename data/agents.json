@@ -379,7 +379,7 @@
         "enabled": true
       }
     ],
-    "enabled": true
+    "enabled": false
   },
   "telegram": {
     "display_name": "Telegram-агент",
@@ -418,6 +418,10 @@
         "enabled": true
       },
       {
+        "name": "reply_to_telegram_message",
+        "enabled": true
+      },
+      {
         "name": "get_chats",
         "enabled": true
       },
@@ -435,6 +439,18 @@
       },
       {
         "name": "get_own_telegram_profile",
+        "enabled": true
+      },
+      {
+        "name": "get_user_status",
+        "enabled": true
+      },
+      {
+        "name": "collect_my_messages",
+        "enabled": true
+      },
+      {
+        "name": "save_my_style",
         "enabled": true
       }
     ],

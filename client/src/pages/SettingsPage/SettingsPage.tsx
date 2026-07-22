@@ -7,16 +7,14 @@ import { fetchJson } from "../../utils/http";
 interface AgentCfg { display_name?: string; enabled?: boolean }
 interface UserProfile { name: string; role: string; preferences: string; context: string }
 interface SettingsPageProps {
-	developerMode: boolean;
 	pcControlMode: boolean;
 	showMonitor: boolean;
-	onDeveloperModeChange: (enabled: boolean) => void;
 	onPcControlModeChange: (enabled: boolean) => void;
 	onShowMonitorChange: (enabled: boolean) => void;
 }
 const EMPTY_PROFILE: UserProfile = { name: "", role: "", preferences: "", context: "" };
 
-export function SettingsPage({ developerMode, pcControlMode, showMonitor, onDeveloperModeChange, onPcControlModeChange, onShowMonitorChange }: SettingsPageProps) {
+export function SettingsPage({ pcControlMode, showMonitor, onPcControlModeChange, onShowMonitorChange }: SettingsPageProps) {
 	const [models, setModels] = useState<Record<string, string>>({});
 	const [agentsConfig, setAgentsConfig] = useState<Record<string, AgentCfg>>({});
 	const [profile, setProfile] = useState<UserProfile>(EMPTY_PROFILE);
@@ -28,7 +26,7 @@ export function SettingsPage({ developerMode, pcControlMode, showMonitor, onDeve
 		queryKey: ["settings"],
 		queryFn: async () => {
 			const [modelsData, agentsData, availData, ollamaData, profileData] = await Promise.all([
-				fetchJson<{ models?: Record<string, string>; default?: string; custom_models?: string[] }>("/api/models", { models: {}, default: "", custom_models: [] }),
+				fetchJson<{ models?: Record<string, string>; default?: string; custom_models?: string[]; disabled_models?: string[] }>("/api/models", { models: {}, default: "", custom_models: [], disabled_models: [] }),
 				fetchJson<{ config?: Record<string, AgentCfg> }>("/api/agents-config", { config: {} }),
 				fetchJson<{ models?: string[] }>("/api/available-models", { models: [] }),
 				fetchJson<{ models?: string[]; error?: string }>("/api/ollama-models", { models: [] }),
@@ -39,7 +37,7 @@ export function SettingsPage({ developerMode, pcControlMode, showMonitor, onDeve
 	});
 
 	const saveModels = useMutation({
-		mutationFn: (updated: Record<string, string>) => fetchJson("/api/models", null, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ models: updated, custom_models: data?.modelsData.custom_models ?? [] }) }),
+		mutationFn: (updated: Record<string, string>) => fetchJson("/api/models", null, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ models: updated, custom_models: data?.modelsData.custom_models ?? [], disabled_models: data?.modelsData.disabled_models ?? [] }) }),
 	});
 	const saveAgents = useMutation({
 		mutationFn: (updated: Record<string, AgentCfg>) => fetchJson("/api/agents-config", null, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ config: updated }) }),
@@ -56,8 +54,11 @@ export function SettingsPage({ developerMode, pcControlMode, showMonitor, onDeve
 	const downloadedModels = data?.ollamaData.models ?? [];
 	const customModels = data?.modelsData.custom_models ?? [];
 	const availableModels = data?.availData.models ?? [];
+	const disabledModels = new Set(data?.modelsData.disabled_models ?? []);
+	const assignedModelValues = new Set(Object.values(effectiveModels).filter(Boolean));
 	const downloadedSet = new Set(downloadedModels);
-	const allModels = Array.from(new Set([...downloadedModels, ...availableModels, ...customModels, ...Object.values(effectiveModels).filter(Boolean), defaultModel].filter(Boolean)));
+	const allModels = Array.from(new Set([...downloadedModels, ...availableModels, ...customModels, ...assignedModelValues, defaultModel].filter(Boolean)))
+		.filter((m) => !disabledModels.has(m) || assignedModelValues.has(m));
 	const selectOptions = [{ value: "", label: `по умолчанию (${defaultModel})` }, ...allModels.map((m) => ({ value: m, label: downloadedSet.has(m) ? `${m} · скачана` : m, dot: downloadedSet.has(m) ? "#c084fc" : undefined }))];
 
 	const handleChange = (key: string, value: string) => { const updated = { ...effectiveModels, [key]: value }; setModelsEdited(true); setModels(updated); saveModels.mutate(updated); };
@@ -71,10 +72,6 @@ export function SettingsPage({ developerMode, pcControlMode, showMonitor, onDeve
 				<div className={styles.row}>
 					<div className={styles.rowLabel}><div className={styles.rowName}>Режим управления ПК</div><div className={styles.rowHint}>Только оператор + ПК-инструменты, без саб-агентов</div></div>
 					<label className={styles.switchControl}><input type="checkbox" checked={pcControlMode} onChange={(e) => onPcControlModeChange(e.target.checked)} /><span className={styles.switchTrack}><span className={styles.switchThumb} /></span></label>
-				</div>
-				<div className={styles.row}>
-					<div className={styles.rowLabel}><div className={styles.rowName}>Режим разработчика</div><div className={styles.rowHint}>Показывает debug-разделы</div></div>
-					<label className={styles.switchControl}><input type="checkbox" checked={developerMode} onChange={(e) => onDeveloperModeChange(e.target.checked)} /><span className={styles.switchTrack}><span className={styles.switchThumb} /></span></label>
 				</div>
 				<div className={styles.row}>
 					<div className={styles.rowLabel}><div className={styles.rowName}>Показывать монитор</div><div className={styles.rowHint}>Плавающее окно поверх всех окон во время работы агента</div></div>

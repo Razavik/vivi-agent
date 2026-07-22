@@ -1,18 +1,18 @@
 import { useRef } from "react";
-import {
-	ImagePlus,
-	SendHorizontal,
-	Square,
-	Trash2,
-	X,
-} from "lucide-react";
+import { ImagePlus, SendHorizontal, Square, X } from "lucide-react";
 import styles from "./Composer.module.css";
 import { LiveStatus } from "../LiveStatus/LiveStatus";
-import { Select } from "../Select/Select";
+import { OperatorSettingsSelect } from "../OperatorSettingsSelect/OperatorSettingsSelect";
+import { formatModelLabel } from "../../utils/modelLabel";
 
 interface ModelOption {
 	value: string;
 	label: string;
+}
+
+interface SubAgentOption {
+	name: string;
+	displayName: string;
 }
 
 interface ComposerProps {
@@ -20,10 +20,9 @@ interface ComposerProps {
 	images: string[];
 	contextTokens: number;
 	contextLimit: number;
+	modelSupportsVision: boolean;
 	selectedModel: string;
 	modelOptions: ModelOption[];
-	onClearHistory: () => void;
-	onClearLogs: () => void;
 	onModelChange: (value: string) => void;
 	onTaskChange: (value: string) => void;
 	onImagesChange: (images: string[]) => void;
@@ -33,6 +32,18 @@ interface ComposerProps {
 	liveStatus: string;
 	pcControlMode: boolean;
 	onPcControlModeChange: (enabled: boolean) => void;
+	subAgentOptions?: SubAgentOption[];
+	preferredAgents?: string[];
+	onTogglePreferredAgent?: (name: string) => void;
+	onClearHistory?: () => void;
+	onClearLogs?: () => void;
+	onCompressMemory?: () => Promise<{
+		compressed: boolean;
+		before_count?: number;
+		after_count?: number;
+		reason?: string;
+		error?: string;
+	}>;
 }
 
 export function Composer({
@@ -40,10 +51,9 @@ export function Composer({
 	images,
 	contextTokens,
 	contextLimit,
+	modelSupportsVision,
 	selectedModel,
 	modelOptions,
-	onClearHistory,
-	onClearLogs,
 	onModelChange,
 	onTaskChange,
 	onImagesChange,
@@ -53,8 +63,15 @@ export function Composer({
 	liveStatus,
 	pcControlMode,
 	onPcControlModeChange,
+	subAgentOptions = [],
+	preferredAgents = [],
+	onTogglePreferredAgent,
+	onClearHistory,
+	onClearLogs,
+	onCompressMemory,
 }: ComposerProps) {
 	const fileInputRef = useRef<HTMLInputElement>(null);
+	const blockedByVision = images.length > 0 && !modelSupportsVision;
 	const tokenPercent = Math.max(
 		0,
 		Math.min(
@@ -62,11 +79,6 @@ export function Composer({
 			Math.round((contextTokens / Math.max(contextLimit, 1)) * 100),
 		),
 	);
-	const selectedModelLabel =
-		modelOptions.find((opt) => opt.value === selectedModel)?.label ||
-		selectedModel ||
-		"Выбрать модель";
-
 	const readFilesAsBase64 = (files: File[]): Promise<string[]> => {
 		const imageFiles = files.filter((f) => f.type.startsWith("image/"));
 		return Promise.all(
@@ -144,6 +156,12 @@ export function Composer({
 						))}
 					</div>
 				)}
+				{blockedByVision && (
+					<div className={styles.visionWarning}>
+						Модель «{formatModelLabel(selectedModel, modelOptions)}»
+						не умеет анализировать изображения
+					</div>
+				)}
 				<div className={styles.inputRow}>
 					<input
 						ref={fileInputRef}
@@ -162,7 +180,8 @@ export function Composer({
 								if (
 									e.key === "Enter" &&
 									!e.shiftKey &&
-									!isRunning
+									!isRunning &&
+									!blockedByVision
 								) {
 									e.preventDefault();
 									onRun();
@@ -174,54 +193,23 @@ export function Composer({
 					<div className={styles.buttonsWrapper}>
 						<div className={styles.controlStrip}>
 							<div className={styles.actionGroup}>
-								<button
-									className={`${styles.actionBtn} ${styles.clearButton}`}
-									onClick={() => {
-										onClearHistory();
-										onClearLogs();
-									}}
-									disabled={isRunning}
-									title="Очистить историю и логи"
-								>
-									<Trash2 size={15} />
-									Очистить всё
-								</button>
-								<label
-									className={styles.pcModeToggle}
-									title="Режим управления ПК"
-								>
-									<input
-										type="checkbox"
-										checked={pcControlMode}
-										onChange={(e) =>
-											onPcControlModeChange(
-												e.target.checked,
-											)
-										}
-									/>
-									<span className={styles.pcModeTextGroup}>
-										<span className={styles.pcModeLabel}>
-											ПК
-										</span>
-									</span>
-									<span className={styles.pcModeSwitch}>
-										<span className={styles.pcModeThumb} />
-									</span>
-								</label>
-								<div className={styles.modelMenuWrap}>
-									<Select
-										value={selectedModel}
-										onChange={onModelChange}
-										options={modelOptions}
-										placeholder={selectedModelLabel}
-										className={styles.modelSelect}
-										style={{
-											width: "156px",
-											minWidth: "156px",
-											maxWidth: "156px",
-										}}
-									/>
-								</div>
+								<OperatorSettingsSelect
+									selectedModel={selectedModel}
+									modelOptions={modelOptions}
+									onModelChange={onModelChange}
+									pcControlMode={pcControlMode}
+									onPcControlModeChange={
+										onPcControlModeChange
+									}
+									subAgentOptions={subAgentOptions}
+									preferredAgents={preferredAgents}
+									onTogglePreferredAgent={(name) =>
+										onTogglePreferredAgent?.(name)
+									}
+									onClearHistory={onClearHistory}
+									onClearLogs={onClearLogs}
+									onCompressMemory={onCompressMemory}
+								/>
 							</div>
 						</div>
 						<div className={styles.rightControls}>
@@ -246,8 +234,7 @@ export function Composer({
 									<span className={styles.contextOrbInner}>
 										<span
 											className={styles.contextOrbValue}
-										>
-										</span>
+										></span>
 									</span>
 								</button>
 								<div
@@ -284,6 +271,12 @@ export function Composer({
 							<button
 								className={styles.sendBtn}
 								onClick={isRunning ? onStop : onRun}
+								disabled={!isRunning && blockedByVision}
+								title={
+									blockedByVision
+										? "Модель не поддерживает изображения"
+										: undefined
+								}
 							>
 								{isRunning ? (
 									<Square size={16} fill="currentColor" />

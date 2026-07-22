@@ -6,13 +6,13 @@ from collections import deque
 from threading import Event
 from typing import Any
 
-from src.agent.dependency_graph import DependencyGraph
-from src.agent.message_bus import MessageBus
-from src.agent.run_control import RunController
-from src.agent.run_registry import AgentRun, RunRegistry
-from src.agent.runtime import AgentRuntime
-from src.agent.supervisor import SupervisorLoop
-from src.agent.supervisor_trigger import SupervisorTrigger
+from src.agent.core.runtime import AgentRuntime
+from src.agent.lifecycle.dependency_graph import DependencyGraph
+from src.agent.lifecycle.run_control import RunController
+from src.agent.lifecycle.run_registry import AgentRun, RunRegistry
+from src.agent.messaging.message_bus import MessageBus
+from src.agent.supervision.supervisor import SupervisorLoop
+from src.agent.supervision.supervisor_trigger import SupervisorTrigger
 from src.infra.artifact_store import ArtifactStore
 from src.infra.chat_memory import ChatMemoryStore
 from src.infra.config import Settings, get_settings

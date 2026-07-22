@@ -12,9 +12,15 @@ import type {
 } from "../../types";
 import { readJson } from "../../utils/http";
 import { extractMarkdownImages } from "../../utils/renderText";
+import { formatModelLabel } from "../../utils/modelLabel";
 import { ImageThumbGrid } from "../../components/ImageThumbGrid/ImageThumbGrid";
 import { AgentList } from "./components/sidebar/AgentList";
 import { PlanSidebar } from "./components/plan/PlanSidebar";
+
+const SIDEBAR_MIN_WIDTH = 260;
+const SIDEBAR_MAX_WIDTH = 560;
+const SIDEBAR_DEFAULT_WIDTH = 330;
+const SIDEBAR_WIDTH_STORAGE_KEY = "agentChatSidebarWidth";
 
 interface AgentChatPageProps {
 	panes: SubAgentPane[];
@@ -35,6 +41,52 @@ const AGENT_DISPLAY_NAMES: Record<string, string> = {
 	telegram: "Telegram-агент",
 	web: "Веб-агент",
 };
+
+function sessionsToPane(
+	name: string,
+	displayName: string,
+	sessions: any[],
+): SubAgentPane {
+	const normalizedSessions: SubAgentSession[] = sessions.map((session) => ({
+		task: session.task ?? "",
+		model: session.model ?? "",
+		result: session.result ?? "",
+		steps: Array.isArray(session.steps)
+			? session.steps.map((action: any) => ({
+					step: action.step ?? 0,
+					thought: action.thought,
+					action: action.action,
+					args: action.args,
+					result: action.result,
+					success: action.success,
+				}))
+			: [],
+		plan: Array.isArray(session.plan)
+			? session.plan.map((item: any) => ({
+					id: item.id ?? "",
+					content: item.content ?? "",
+					status: item.status ?? "pending",
+				}))
+			: [],
+	}));
+
+	const lastSession = normalizedSessions[normalizedSessions.length - 1];
+	const allSteps = normalizedSessions.flatMap((session) => session.steps);
+
+	return {
+		id: `history:${name}`,
+		name,
+		displayName,
+		task: normalizedSessions[0]?.task ?? "",
+		status: "done",
+		steps: allSteps,
+		result: lastSession?.result,
+		model: lastSession?.model,
+		plan: lastSession?.plan,
+		sessions: normalizedSessions,
+		startedAt: 0,
+	};
+}
 
 function historyToPane(
 	name: string,
@@ -161,44 +213,95 @@ function buildPaneList(
 		}
 	}
 	const mergedActive = Array.from(grouped.values());
-
-	// Теперь объединяем с историческими панелями
-	const finalGrouped = new Map<string, SubAgentPane>();
-	for (const pane of mergedActive) {
-		finalGrouped.set(pane.name, pane);
-	}
+	const activeByName = new Map(mergedActive.map((pane) => [pane.name, pane]));
+	// historicPanes на вызове — это [...configuredPanes, ...реальнаяИстория]:
+	// пустышки из конфига (task: "", status: "idle") идут первыми, поэтому
+	// простой "первый встреченный побеждает" всегда оставлял бы пустышку,
+	// даже если следом идёт настоящая история с сохранёнными сессиями агента —
+	// сайдбар вечно показывал бы "Ещё не запускался". Вместо этого пропускаем
+	// вперёд пустышку, если следующий pane с тем же именем реально содержит данные.
+	const hasContent = (pane: SubAgentPane): boolean =>
+		pane.steps.length > 0 ||
+		(pane.sessions?.length ?? 0) > 0 ||
+		Boolean(pane.result) ||
+		Boolean(pane.task);
+	const historicByName = new Map<string, SubAgentPane>();
 	for (const pane of historicPanes) {
-		const existing = finalGrouped.get(pane.name);
-		if (!existing) {
-			// Если нет активной панели с таким именем, добавляем историческую
-			finalGrouped.set(pane.name, pane);
-			continue;
+		const existing = historicByName.get(pane.name);
+		if (!existing || (!hasContent(existing) && hasContent(pane))) {
+			historicByName.set(pane.name, pane);
 		}
+	}
+
+	// Порядок панелей фиксируем по historicPanes (который на вызове уже включает
+	// стабильный конфиг агентов) — иначе агент, у которого только что появилось
+	// live SSE-событие, раньше выпрыгивал в начало списка (порядок появления
+	// событий непредсказуем), и панели визуально "менялись местами" при каждом
+	// заходе на страницу в зависимости от того, что успело прийти к моменту рендера.
+	const orderedNames: string[] = [];
+	const seenNames = new Set<string>();
+	for (const pane of historicPanes) {
+		if (!seenNames.has(pane.name)) {
+			seenNames.add(pane.name);
+			orderedNames.push(pane.name);
+		}
+	}
+	for (const pane of mergedActive) {
+		if (!seenNames.has(pane.name)) {
+			seenNames.add(pane.name);
+			orderedNames.push(pane.name);
+		}
+	}
+
+	return orderedNames.map((name) => {
+		const active = activeByName.get(name);
+		const historic = historicByName.get(name);
+		if (!active) return historic as SubAgentPane;
+		if (!historic) return active;
+
 		// Предпочитаем активную (live SSE) панель, но только если в ней реально
 		// есть данные. Живая панель может прийти пустой (steps/sessions), если
 		// sub_agent_step-события не успели накопиться в состоянии до момента
 		// рендера — тогда историческая панель с сохранённой памятью агента
 		// полнее и должна победить, даже если её статус не idle.
-		const existingHasContent =
-			existing.steps.length > 0 ||
-			(existing.sessions?.length ?? 0) > 0 ||
-			Boolean(existing.result);
-		if (existing.status === "idle" && pane.status !== "idle") {
-			finalGrouped.set(pane.name, pane);
-			continue;
+		const activeHasContent =
+			active.steps.length > 0 ||
+			(active.sessions?.length ?? 0) > 0 ||
+			Boolean(active.result);
+		if (active.status === "idle" && historic.status !== "idle") {
+			return historic;
 		}
-		if (!existingHasContent) {
+		if (!activeHasContent) {
 			const hasHistoricContent =
-				pane.steps.length > 0 ||
-				(pane.sessions?.length ?? 0) > 0 ||
-				Boolean(pane.result);
+				historic.steps.length > 0 ||
+				(historic.sessions?.length ?? 0) > 0 ||
+				Boolean(historic.result);
 			if (hasHistoricContent) {
-				finalGrouped.set(pane.name, { ...pane, status: existing.status });
+				return { ...historic, status: active.status };
 			}
 		}
-	}
-
-	return Array.from(finalGrouped.values());
+		// Раньше здесь было `return active;` — как только у живой панели
+		// появлялся хоть один шаг, historic.sessions (все ранее сохранённые
+		// на диске сессии этого саб-агента) отбрасывались целиком, и в чате
+		// оставалась видна только самая последняя делегированная задача —
+		// выглядело так, будто чат "пересоздаётся" при каждой новой задаче,
+		// хотя на диске (см. ChatMemoryStore.append_session) ничего не терялось.
+		// historic.sessions — авторитетный источник (свежепрочитан с диска),
+		// active.sessions добавляем поверх только то, чего там ещё нет —
+		// на случай параллельной делегации той же саб-агенту, ещё не
+		// успевшей записаться на диск к моменту последнего loadHistory().
+		const sessionKey = (s: SubAgentSession) =>
+			`${s.task}|${s.model}|${s.steps.length}|${s.result ?? ""}`;
+		const historicSessions = historic.sessions ?? [];
+		const historicKeys = new Set(historicSessions.map(sessionKey));
+		const extraActiveSessions = (active.sessions ?? []).filter(
+			(s) => !historicKeys.has(sessionKey(s)),
+		);
+		return {
+			...active,
+			sessions: [...historicSessions, ...extraActiveSessions],
+		};
+	});
 }
 
 function fmt(value: unknown): string {
@@ -304,7 +407,7 @@ function SessionBlock({
 					<span className={styles.sessionDividerLine} />
 					{modelChanged && (
 						<span className={styles.sessionDividerLabel}>
-							модель: {session.model}
+							модель: {formatModelLabel(session.model)}
 						</span>
 					)}
 					<span className={styles.sessionDividerLine} />
@@ -321,7 +424,7 @@ function SessionBlock({
 					</div>
 					{session.model && (
 						<span className={styles.modelBadge}>
-							{session.model}
+							{formatModelLabel(session.model)}
 						</span>
 					)}
 				</div>
@@ -385,11 +488,73 @@ function AgentChat({ pane }: { pane: SubAgentPane }) {
 	);
 }
 
-export function AgentChatPage({ panes, onClearSubAgentPanes }: AgentChatPageProps) {
+export function AgentChatPage({
+	panes,
+	onClearSubAgentPanes,
+}: AgentChatPageProps) {
 	const { paneId } = useParams<{ paneId: string }>();
 	const navigate = useNavigate();
 	const [historicPanes, setHistoricPanes] = useState<SubAgentPane[]>([]);
+	const [historyLoaded, setHistoryLoaded] = useState(false);
 	const [configuredPanes, setConfiguredPanes] = useState<SubAgentPane[]>([]);
+	const [telegramStyle, setTelegramStyle] = useState<string | null>(null);
+	const [telegramStyleDraft, setTelegramStyleDraft] = useState("");
+	const [telegramStyleSaving, setTelegramStyleSaving] = useState(false);
+	const [telegramStyleError, setTelegramStyleError] = useState<string | null>(
+		null,
+	);
+	const [telegramStyleOpen, setTelegramStyleOpen] = useState(false);
+
+	const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+		const saved = Number(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY));
+		return Number.isFinite(saved) &&
+			saved >= SIDEBAR_MIN_WIDTH &&
+			saved <= SIDEBAR_MAX_WIDTH
+			? saved
+			: SIDEBAR_DEFAULT_WIDTH;
+	});
+	const pageBodyRef = useRef<HTMLDivElement>(null);
+	const resizingRef = useRef(false);
+	const [resizing, setResizing] = useState(false);
+
+	useEffect(() => {
+		const onMouseMove = (e: MouseEvent) => {
+			if (!resizingRef.current || !pageBodyRef.current) return;
+			const rect = pageBodyRef.current.getBoundingClientRect();
+			const raw = rect.right - e.clientX;
+			setSidebarWidth(
+				Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, raw)),
+			);
+		};
+		const onMouseUp = () => {
+			if (!resizingRef.current) return;
+			resizingRef.current = false;
+			setResizing(false);
+			document.body.style.cursor = "";
+			document.body.style.userSelect = "";
+		};
+		window.addEventListener("mousemove", onMouseMove);
+		window.addEventListener("mouseup", onMouseUp);
+		return () => {
+			window.removeEventListener("mousemove", onMouseMove);
+			window.removeEventListener("mouseup", onMouseUp);
+		};
+	}, []);
+
+	// Персистим ширину только по завершении перетаскивания, а не на каждый
+	// mousemove — иначе тысячи записей в localStorage за один drag.
+	useEffect(() => {
+		if (resizing) return;
+		localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth));
+	}, [resizing, sidebarWidth]);
+
+	const startResize = useCallback((e: React.MouseEvent) => {
+		e.preventDefault();
+		resizingRef.current = true;
+		setResizing(true);
+		document.body.style.cursor = "col-resize";
+		document.body.style.userSelect = "none";
+	}, []);
 
 	const loadConfiguredAgents = useCallback(async () => {
 		try {
@@ -452,11 +617,17 @@ export function AgentChatPage({ panes, onClearSubAgentPanes }: AgentChatPageProp
 			});
 			const historyPanes: SubAgentPane[] = (historyData.agents ?? []).map(
 				(agent: any) =>
-					historyToPane(
-						agent.name,
-						AGENT_DISPLAY_NAMES[agent.name] ?? agent.name,
-						agent.chat_history ?? [],
-					),
+					Array.isArray(agent.sessions) && agent.sessions.length > 0
+						? sessionsToPane(
+								agent.name,
+								AGENT_DISPLAY_NAMES[agent.name] ?? agent.name,
+								agent.sessions,
+							)
+						: historyToPane(
+								agent.name,
+								AGENT_DISPLAY_NAMES[agent.name] ?? agent.name,
+								agent.chat_history ?? [],
+							),
 			);
 
 			// Загружаем активные запуски
@@ -490,8 +661,51 @@ export function AgentChatPage({ panes, onClearSubAgentPanes }: AgentChatPageProp
 			setHistoricPanes(Array.from(merged.values()));
 		} catch {
 			// ignore history load errors
+		} finally {
+			setHistoryLoaded(true);
 		}
 	}, []);
+
+	const loadTelegramStyle = useCallback(async () => {
+		try {
+			const res = await fetch("/api/telegram-style");
+			const data = await readJson<{ style_guide?: string | null }>(res, {
+				style_guide: null,
+			});
+			const guide = data.style_guide ?? null;
+			setTelegramStyle(guide);
+			setTelegramStyleDraft(guide ?? "");
+		} catch {
+			// ignore — просто останется незаполненным
+		}
+	}, []);
+
+	const saveTelegramStyle = useCallback(async () => {
+		setTelegramStyleSaving(true);
+		setTelegramStyleError(null);
+		try {
+			const res = await fetch("/api/telegram-style", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ style_guide: telegramStyleDraft }),
+			});
+			const data = await readJson<{
+				style_guide?: string | null;
+				error?: string;
+			}>(res, {});
+			if (!res.ok) {
+				setTelegramStyleError(data.error || "Не удалось сохранить");
+				return;
+			}
+			const guide = data.style_guide ?? null;
+			setTelegramStyle(guide);
+			setTelegramStyleDraft(guide ?? "");
+		} catch {
+			setTelegramStyleError("Не удалось сохранить — проверь соединение");
+		} finally {
+			setTelegramStyleSaving(false);
+		}
+	}, [telegramStyleDraft]);
 
 	const clearAgent = useCallback(
 		async (agentName: string) => {
@@ -520,9 +734,10 @@ export function AgentChatPage({ panes, onClearSubAgentPanes }: AgentChatPageProp
 		const timer = window.setTimeout(() => {
 			void loadConfiguredAgents();
 			void loadHistory();
+			void loadTelegramStyle();
 		}, 0);
 		return () => window.clearTimeout(timer);
-	}, [loadConfiguredAgents, loadHistory]);
+	}, [loadConfiguredAgents, loadHistory, loadTelegramStyle]);
 
 	useEffect(() => {
 		const hasDone = panes.some(
@@ -548,9 +763,14 @@ export function AgentChatPage({ panes, onClearSubAgentPanes }: AgentChatPageProp
 	const configByName = new Map(
 		configuredPanes.map((pane) => [pane.name, pane]),
 	);
+	// configuredPanes идёт первым источником порядка: он всегда в одном и том же
+	// порядке (data/agents.json), тогда как historicPanes отсортирован backend'ом
+	// по алфавиту имени файла памяти (file/system/telegram/web) — другой порядок,
+	// чем в конфиге. Если поставить historicPanes первым, список визуально
+	// "прыгает" сразу после того, как история догружается (см. buildPaneList).
 	const allPanes = buildPaneList(panes, [
-		...historicPanes,
 		...configuredPanes,
+		...historicPanes,
 	]).map((pane) => {
 		const meta = configByName.get(pane.name);
 		if (!meta) return pane;
@@ -568,11 +788,18 @@ export function AgentChatPage({ panes, onClearSubAgentPanes }: AgentChatPageProp
 			: allPanes[0]?.id;
 
 	useEffect(() => {
-		if (!allPanes.length) return;
+		// До завершения первого /api/agents/history запроса allPanes состоит
+		// только из пустышек configuredPanes (id "config:*") — если редиректить
+		// по ним, глубокая ссылка/reload на конкретного агента (id "history:*")
+		// не совпадёт с пустышкой и нас уводит на первого агента ДО того, как
+		// реальная история успела загрузиться. historyLoaded ждёт первого
+		// завершённого запроса, чтобы редирект срабатывал только на самом деле
+		// несуществующий id, а не на ещё не подгруженный.
+		if (!historyLoaded || !allPanes.length) return;
 		if (!paneId || !allPanes.find((pane) => pane.id === paneId)) {
 			navigate(`/agents/${allPanes[0].id}`, { replace: true });
 		}
-	}, [paneId, allPanes, navigate]);
+	}, [paneId, allPanes, navigate, historyLoaded]);
 
 	if (!allPanes.length) {
 		return <div className={styles.chatEmpty}>Нет данных по агентам</div>;
@@ -592,55 +819,79 @@ export function AgentChatPage({ panes, onClearSubAgentPanes }: AgentChatPageProp
 			/>
 
 			<div className={styles.chatArea}>
-				{activePane.status === "idle" ? (
-					<div className={styles.agentProfile}>
-						<div className={styles.profileHeader}>
-							<div>
-								<h2>{activePane.displayName}</h2>
-								<p>
-									{activePane.description ||
-										"Агент настроен, но еще не запускался."}
-								</p>
-							</div>
-						</div>
-						<div className={styles.profileGrid}>
-							<section>
-								<h3>Возможности</h3>
-								<div className={styles.profileTags}>
-									{(activePane.capabilities?.length
-										? activePane.capabilities
-										: ["ожидание задачи"]
-									).map((item) => (
-										<span key={item}>{item}</span>
-									))}
+				<div className={styles.pageBody} ref={pageBodyRef}>
+					<div className={styles.mainColumn}>
+						{activePane.status === "idle" ? (
+							<div className={styles.agentProfile}>
+								<div className={styles.profileHeader}>
+									<div>
+										<h2>{activePane.displayName}</h2>
+										<p>
+											{activePane.description ||
+												"Агент настроен, но еще не запускался."}
+										</p>
+									</div>
 								</div>
-							</section>
-							<section>
-								<h3>Ограничения</h3>
-								<ul>
-									{(activePane.limits?.length
-										? activePane.limits
-										: [
-												"Действует только через доступные инструменты",
-											]
-									).map((item) => (
-										<li key={item}>{item}</li>
-									))}
-								</ul>
-							</section>
-						</div>
-					</div>
-				) : (
-					<div className={styles.logLayout}>
-						<div className={styles.logMain}>
-							<AgentChat pane={activePane} />
-							<div className={styles.readonlyBar}>
-								Только просмотр — писать агентам нельзя
+								<div className={styles.profileGrid}>
+									<section>
+										<h3>Возможности</h3>
+										<div className={styles.profileTags}>
+											{(activePane.capabilities?.length
+												? activePane.capabilities
+												: ["ожидание задачи"]
+											).map((item) => (
+												<span key={item}>{item}</span>
+											))}
+										</div>
+									</section>
+									<section>
+										<h3>Ограничения</h3>
+										<ul>
+											{(activePane.limits?.length
+												? activePane.limits
+												: [
+														"Действует только через доступные инструменты",
+													]
+											).map((item) => (
+												<li key={item}>{item}</li>
+											))}
+										</ul>
+									</section>
+								</div>
 							</div>
-						</div>
-						<PlanSidebar pane={activePane} />
+						) : (
+							<>
+								<AgentChat pane={activePane} />
+								<div className={styles.readonlyBar}>
+									Только просмотр — писать агентам нельзя
+								</div>
+							</>
+						)}
 					</div>
-				)}
+					<div
+						className={`${styles.resizeHandle} ${resizing ? styles.resizing : ""}`}
+						onMouseDown={startResize}
+					/>
+					<PlanSidebar
+						pane={activePane}
+						width={sidebarWidth}
+						telegramStyle={
+							activePane.name === "telegram"
+								? {
+										draft: telegramStyleDraft,
+										current: telegramStyle,
+										saving: telegramStyleSaving,
+										error: telegramStyleError,
+										open: telegramStyleOpen,
+										onToggleOpen: () =>
+											setTelegramStyleOpen((v) => !v),
+										onDraftChange: setTelegramStyleDraft,
+										onSave: () => void saveTelegramStyle(),
+									}
+								: undefined
+						}
+					/>
+				</div>
 			</div>
 		</div>
 	);

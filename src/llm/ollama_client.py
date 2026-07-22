@@ -10,7 +10,7 @@ from typing import Any, Callable
 import requests
 from requests import Response
 
-from src.agent.schemas import ActionStep
+from src.agent.core.schemas import ActionStep
 from src.infra.errors import AgentError, LLMResponseError, ValidationError
 
 
@@ -303,102 +303,13 @@ class OllamaClient:
         )
 
     def _clean_markdown_code_blocks(self, content: str) -> str:
-        # Убираем markdown кодовые блокки вида ```json ... ``` или ``` ... ```
-        pattern = r"```(?:json)?\s*([\s\S]*?)\s*```"
-        matches = re.findall(pattern, content)
-        if matches:
-            content = matches[-1].strip()
-        # Обрезаем любой текст до первого { и после последнего }
-        # Это убирает "думает вслух", <function_call>, === заголовки === и прочее
-        start = content.find("{")
-        end = content.rfind("}")
-        if start != -1 and end != -1 and end >= start:
-            content = content[start:end + 1]
-        # Заменяем реальные переносы строк внутри JSON-строк на \n
-        # Модели иногда вставляют буквальный \n в строковое поле, ломая JSON
-        content = self._fix_literal_newlines_in_json(content)
-        # Пробуем починить обрезанный JSON (незакрытая строка / объект)
-        content = self._try_repair_json(content)
-        return content
+        return clean_markdown_code_blocks(content)
 
     def _try_repair_json(self, content: str) -> str:
-        """Пробует починить обрезанный JSON: закрывает незакрытые строки, объекты и массивы."""
-        try:
-            json.loads(content)
-            return content  # уже валидный
-        except json.JSONDecodeError:
-            pass
-
-        # Проходим посимвольно, отслеживая стек вложенности и строковое состояние
-        stack: list[str] = []  # '{' или '['
-        in_string = False
-        escape_next = False
-        for ch in content:
-            if escape_next:
-                escape_next = False
-                continue
-            if ch == "\\":
-                escape_next = True
-                continue
-            if ch == '"':
-                in_string = not in_string
-                continue
-            if in_string:
-                continue
-            if ch in ("{", "["):
-                stack.append(ch)
-            elif ch == "}":
-                if stack and stack[-1] == "{":
-                    stack.pop()
-            elif ch == "]":
-                if stack and stack[-1] == "[":
-                    stack.pop()
-
-        # Строим суффикс: закрываем незакрытую строку, затем стек в обратном порядке
-        suffix = ""
-        if in_string:
-            suffix += '"'
-        for opener in reversed(stack):
-            suffix += "}" if opener == "{" else "]"
-
-        if not suffix:
-            return content  # ничего не исправить
-
-        # Перед закрытием объекта убираем висячую запятую или незакрытый ключ
-        trimmed = (content + suffix).rstrip()
-        # Удаляем trailing запятую перед закрывающими скобками
-        trimmed = re.sub(r",\s*([}\]])", r"\1", trimmed)
-
-        try:
-            json.loads(trimmed)
-            return trimmed
-        except json.JSONDecodeError:
-            return content  # не смогли починить — вернём оригинал
+        return try_repair_json(content)
 
     def _fix_literal_newlines_in_json(self, content: str) -> str:
-        """Заменяет буквальные переносы строк внутри JSON-строковых значений на \\n."""
-        result = []
-        in_string = False
-        escape_next = False
-        for ch in content:
-            if escape_next:
-                result.append(ch)
-                escape_next = False
-            elif ch == "\\":
-                result.append(ch)
-                escape_next = True
-            elif ch == '"':
-                result.append(ch)
-                in_string = not in_string
-            elif in_string and ch == "\n":
-                result.append("\\n")
-            elif in_string and ch == "\r":
-                result.append("\\r")
-            elif in_string and ch == "\t":
-                result.append("\\t")
-            else:
-                result.append(ch)
-        return "".join(result)
+        return fix_literal_newlines_in_json(content)
 
     def _post_with_retry(self, body: dict[str, Any], stream: bool) -> Response:
         last_exc: Exception | None = None
@@ -452,3 +363,135 @@ class OllamaClient:
                     pass
                 raise
         raise LLMResponseError(f"Не удалось выполнить запрос к Ollama: {last_exc}")
+
+
+# Вынесены на уровень модуля (а не методы), т.к. не используют self и нужны
+# и OllamaClient, и CodexAcpClient — оба парсят "сырой" ответ модели в JSON
+# по одинаковой схеме action/args/done, только транспорт разный.
+def clean_markdown_code_blocks(content: str) -> str:
+    # Убираем markdown кодовые блокки вида ```json ... ``` или ``` ... ```
+    pattern = r"```(?:json)?\s*([\s\S]*?)\s*```"
+    matches = re.findall(pattern, content)
+    if matches:
+        content = matches[-1].strip()
+    # Обрезаем любой текст до первого { и после последнего }
+    # Это убирает "думает вслух", <function_call>, === заголовки === и прочее
+    start = content.find("{")
+    end = content.rfind("}")
+    if start != -1 and end != -1 and end >= start:
+        content = content[start:end + 1]
+    # Заменяем реальные переносы строк внутри JSON-строк на \n
+    # Модели иногда вставляют буквальный \n в строковое поле, ломая JSON
+    content = fix_literal_newlines_in_json(content)
+    # Пробуем починить обрезанный JSON (незакрытая строка / объект)
+    content = try_repair_json(content)
+    return content
+
+
+def try_repair_json(content: str) -> str:
+    """Пробует починить обрезанный JSON: закрывает незакрытые строки, объекты и массивы."""
+    try:
+        json.loads(content)
+        return content  # уже валидный
+    except json.JSONDecodeError:
+        pass
+
+    # Проходим посимвольно, отслеживая стек вложенности и строковое состояние
+    stack: list[str] = []  # '{' или '['
+    in_string = False
+    escape_next = False
+    for ch in content:
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\":
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch in ("{", "["):
+            stack.append(ch)
+        elif ch == "}":
+            if stack and stack[-1] == "{":
+                stack.pop()
+        elif ch == "]":
+            if stack and stack[-1] == "[":
+                stack.pop()
+
+    # Строим суффикс: закрываем незакрытую строку, затем стек в обратном порядке
+    suffix = ""
+    if in_string:
+        suffix += '"'
+    for opener in reversed(stack):
+        suffix += "}" if opener == "{" else "]"
+
+    if not suffix:
+        return content  # ничего не исправить
+
+    # Перед закрытием объекта убираем висячую запятую или незакрытый ключ
+    trimmed = (content + suffix).rstrip()
+    # Удаляем trailing запятую перед закрывающими скобками
+    trimmed = re.sub(r",\s*([}\]])", r"\1", trimmed)
+
+    try:
+        json.loads(trimmed)
+        return trimmed
+    except json.JSONDecodeError:
+        return content  # не смогли починить — вернём оригинал
+
+
+def fix_literal_newlines_in_json(content: str) -> str:
+    """Заменяет буквальные переносы строк внутри JSON-строковых значений на \\n."""
+    result = []
+    in_string = False
+    escape_next = False
+    for ch in content:
+        if escape_next:
+            result.append(ch)
+            escape_next = False
+        elif ch == "\\":
+            result.append(ch)
+            escape_next = True
+        elif ch == '"':
+            result.append(ch)
+            in_string = not in_string
+        elif in_string and ch == "\n":
+            result.append("\\n")
+        elif in_string and ch == "\r":
+            result.append("\\r")
+        elif in_string and ch == "\t":
+            result.append("\\t")
+        else:
+            result.append(ch)
+    return "".join(result)
+
+
+# Некоторые модели (замечено на MiMo v2.5 через OpenCode ACP) вместо
+# требуемого JSON action-schema иногда выдают заученный на претрейне
+# синтаксис вызова функции (Hermes/Qwen-style):
+#   <tool_call><function=NAME><parameter=KEY>VALUE</parameter></function></tool_call>
+# Под этим может скрываться попытка вызвать наш ЛЕГИТИМНЫЙ инструмент
+# (например take_screenshot из PC-режима) — просто не в том формате.
+# Без распознавания это раньше просто терялось как текст финального ответа.
+_PSEUDO_TOOL_CALL_RE = re.compile(
+    r"<tool_call>\s*<function=([\w\-]+)>(.*?)</function>\s*</tool_call>",
+    re.DOTALL,
+)
+_PSEUDO_TOOL_CALL_PARAM_RE = re.compile(r"<parameter=([\w\-]+)>(.*?)</parameter>", re.DOTALL)
+
+
+def parse_pseudo_tool_call(content: str) -> dict[str, Any] | None:
+    """Пытается распознать псевдо-JSON tool-call синтаксис и превратить его
+    в объект, совместимый с ActionStep.from_dict. None, если не похоже."""
+    match = _PSEUDO_TOOL_CALL_RE.search(content)
+    if not match:
+        return None
+    action_name = match.group(1).strip()
+    if not action_name:
+        return None
+    body = match.group(2)
+    args = {key: value.strip() for key, value in _PSEUDO_TOOL_CALL_PARAM_RE.findall(body)}
+    return {"thought": "", "action": action_name, "args": args, "done": False}

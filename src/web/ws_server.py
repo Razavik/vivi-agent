@@ -45,6 +45,8 @@ async def _handle_connection(ws: ServerConnection, routes: Routes) -> None:
     if action == "run":
         task = msg.get("task", "").strip()
         images: list[str] = msg.get("images") or []
+        raw_preferred = msg.get("preferred_agents") or []
+        preferred_agents: list[str] = [str(name) for name in raw_preferred if isinstance(name, str) and name.strip()]
         if not task and not images:
             await ws.send(json.dumps({"event": "error", "payload": {"message": "Пустая задача"}}, ensure_ascii=False))
             return
@@ -64,7 +66,7 @@ async def _handle_connection(ws: ServerConnection, routes: Routes) -> None:
 
         def run_blocking() -> None:
             try:
-                routes.run_task(task, [], write_ws, images=images)
+                routes.run_task(task, [], write_ws, images=images, preferred_agents=preferred_agents)
             finally:
                 loop.call_soon_threadsafe(send_queue.put_nowait, None)
 

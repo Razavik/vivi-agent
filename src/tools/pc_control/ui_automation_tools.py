@@ -8,7 +8,7 @@ import time
 from typing import Any
 
 from src.infra.errors import ToolExecutionError
-from src.tools.system_mouse_tools import SystemMouseTools
+from src.tools.pc_control.system_mouse_tools import SystemMouseTools
 
 
 class UIAutomationTools:

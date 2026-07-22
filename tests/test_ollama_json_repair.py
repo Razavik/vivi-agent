@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from src.llm.ollama_client import OllamaClient
+from src.llm.ollama_client import OllamaClient, parse_pseudo_tool_call
 
 
 @pytest.fixture()
@@ -67,3 +67,33 @@ def test_fix_literal_newlines_leaves_structure(client: OllamaClient) -> None:
 def test_valid_json_passthrough(client: OllamaClient) -> None:
     raw = '{"action": "x", "args": {}, "done": false}'
     assert client._try_repair_json(raw) == raw
+
+
+def test_parse_pseudo_tool_call_no_params() -> None:
+    # Реальный кейс: MiMo v2.5 через OpenCode ACP вместо JSON action-schema
+    # выдала <tool_call><function=take_screenshot></function></tool_call> —
+    # легитимный вызов нашего PC-инструмента, просто в заученном на
+    # претрейне Hermes/Qwen-style синтаксисе.
+    raw = "<tool_call> <function=take_screenshot> </function> </tool_call>"
+    result = parse_pseudo_tool_call(raw)
+    assert result == {"thought": "", "action": "take_screenshot", "args": {}, "done": False}
+
+
+def test_parse_pseudo_tool_call_with_params() -> None:
+    raw = (
+        "<tool_call>\n<function=bash>\n"
+        '<parameter=command>echo "test"</parameter>\n'
+        "<parameter=description>Run echo test</parameter>\n"
+        "</function>\n</tool_call>"
+    )
+    result = parse_pseudo_tool_call(raw)
+    assert result == {
+        "thought": "",
+        "action": "bash",
+        "args": {"command": 'echo "test"', "description": "Run echo test"},
+        "done": False,
+    }
+
+
+def test_parse_pseudo_tool_call_returns_none_for_plain_text() -> None:
+    assert parse_pseudo_tool_call("Обычный текстовый ответ без вызовов.") is None

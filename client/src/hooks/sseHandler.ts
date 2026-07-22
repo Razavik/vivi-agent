@@ -85,12 +85,19 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 			break;
 
 		case "llm_step": {
+			// Сервер может дослать шаг старого retry через replay WebSocket уже
+			// после завершения или ручной очистки чата. Не даём ему снова
+			// пометить завершённую сессию как активную и вернуть старые события.
+			if (s.isSessionFinished()) break;
 			const { thought, action, args, step } = p;
 			s.setSessionFinished(false);
 			s.setLiveThought("");
 			s.setEvents((prev) => {
 				const next = [...prev];
-				if (thought && p?.thought_source === "native")
+				// thought_source "native" — из отдельного reasoning-канала модели;
+				// "self" — модель без такого канала сама вернула поле thought в
+				// JSON-ответе (см. src/agent/core/runtime.py). Оба показываем.
+				if (thought)
 					next.push({
 						type: "thought",
 						role: "assistant",
@@ -202,6 +209,7 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 		}
 
 		case "agent_warning": {
+			if (s.isSessionFinished()) break;
 			console.warn("[agent_warning]", p?.message);
 			s.setEvents((prev) => [
 				...prev,
@@ -215,6 +223,7 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 		}
 
 		case "agent_error": {
+			if (s.isSessionFinished()) break;
 			const { step, message } = p;
 			s.setEvents((prev) => {
 				const i = prev.findLastIndex(
@@ -444,11 +453,22 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 			s.setSubAgentPanes((prev) =>
 				prev.map((pane) => {
 					if (pane.id !== run_id) return pane;
+					const finalPlan =
+						success && !cancelled && pane.plan
+							? pane.plan.map((item) =>
+									item.status === "in_progress"
+										? {
+												...item,
+												status: "completed" as const,
+											}
+										: item,
+								)
+							: (pane.plan ?? []);
 					const finishedSession = {
 						task: pane.task,
 						model: pane.model || "",
 						steps: pane.steps,
-						plan: pane.plan ?? [],
+						plan: finalPlan,
 						result: resultStr,
 					};
 					return {
@@ -458,6 +478,7 @@ export function handleSseEvent(event: any, s: SseSetters): void {
 							: success
 								? "done"
 								: "error",
+						plan: finalPlan,
 						result: resultStr,
 						errorMessage:
 							!success && !cancelled

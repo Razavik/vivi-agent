@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from src.agent.schemas import ActionStep
-from src.agent.sub_agent import SubAgent
+from src.agent.core.schemas import ActionStep
+from src.agent.core.sub_agent import SubAgent
 from src.infra.chat_memory import ChatMemoryStore
-from src.tools.registry import ToolSpec
+from src.tools.core.registry import ToolSpec
 
 
 class _StubClient:

@@ -15,6 +15,7 @@ from src.infra.errors import ToolExecutionError
 
 
 PROFILE_FILE = Path("data/telegram_profile.json")
+STYLE_FILE = Path("data/telegram_style.json")
 # Скачанные фото редко превышают пару МБ (Telegram сжимает при отправке как "фото");
 # документы-картинки могут быть крупнее — этот потолок защищает от раздувания base64
 # в контексте LLM одним огромным файлом.
@@ -42,6 +43,25 @@ def _save_telegram_profile(profile: dict[str, Any]) -> None:
     PROFILE_FILE.write_text(json.dumps(profile, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def load_telegram_style() -> str | None:
+    """Читает закреплённое описание стиля общения пользователя, если агент его уже
+    выучил (см. collect_my_messages/save_my_style). Отдельная функция уровня модуля
+    по той же причине, что и load_telegram_profile — нужна в app_factory для промпта."""
+    if not STYLE_FILE.exists():
+        return None
+    try:
+        data = json.loads(STYLE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    style_guide = data.get("style_guide") if isinstance(data, dict) else None
+    return style_guide if isinstance(style_guide, str) and style_guide.strip() else None
+
+
+def _save_telegram_style(style_guide: str) -> None:
+    STYLE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STYLE_FILE.write_text(json.dumps({"style_guide": style_guide}, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def _message_media_type(msg: Any) -> str | None:
     """Классифицирует медиа сообщения: photo/document-image/video/audio/document/None.
 
@@ -64,6 +84,39 @@ def _message_media_type(msg: Any) -> str | None:
     if getattr(msg, "voice", None) is not None or getattr(msg, "audio", None) is not None:
         return "audio"
     return None
+
+
+def _format_user_status(status: Any) -> dict[str, Any]:
+    """Приводит telethon UserStatus* к простому строковому статусу + last_seen, если известен.
+
+    Чистая функция без обращений к сети — принимает уже полученный объект status.
+    Детализация зависит от настроек приватности собеседника: не у всех статусов есть точное время.
+    """
+    from datetime import datetime, timezone
+    from telethon.tl.types import (
+        UserStatusOnline,
+        UserStatusOffline,
+        UserStatusRecently,
+        UserStatusLastWeek,
+        UserStatusLastMonth,
+        UserStatusEmpty,
+    )
+
+    if status is None or isinstance(status, UserStatusEmpty):
+        return {"status": "unknown", "last_seen": None}
+    if isinstance(status, UserStatusOnline):
+        expires = getattr(status, "expires", None)
+        return {"status": "online", "last_seen": expires.astimezone(timezone.utc).isoformat() if expires else None}
+    if isinstance(status, UserStatusOffline):
+        was_online = getattr(status, "was_online", None)
+        return {"status": "offline", "last_seen": was_online.astimezone(timezone.utc).isoformat() if was_online else None}
+    if isinstance(status, UserStatusRecently):
+        return {"status": "recently", "last_seen": None}
+    if isinstance(status, UserStatusLastWeek):
+        return {"status": "last_week", "last_seen": None}
+    if isinstance(status, UserStatusLastMonth):
+        return {"status": "last_month", "last_seen": None}
+    return {"status": "unknown", "last_seen": None}
 
 
 class TelegramTools:
@@ -502,6 +555,125 @@ class TelegramTools:
                 self._run_telethon(loop, client.disconnect())
             loop.close()
 
+    def get_user_status(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Возвращает статус собеседника: online/offline/recently/last_week/last_month/unknown.
+
+        Дешёвый одноразовый запрос (connect -> get_entity -> disconnect), в отличие от
+        realtime-события "печатает", которое требует постоянно открытого соединения
+        и в текущую per-call архитектуру этого файла не укладывается.
+        """
+        user_id = str(args.get("user_id", "")).strip()
+        if not user_id:
+            raise ToolExecutionError("Не указан user_id")
+
+        loop = self._create_loop()
+        client = self._create_client(loop)
+
+        try:
+            self._run_telethon(loop, client.connect())
+            if not self._run_telethon(loop, client.is_user_authorized()):
+                raise ToolExecutionError("Сначала завершите авторизацию через telegram_auth_start и telegram_auth_code")
+
+            entity = self._resolve_entity(client, loop, user_id)
+            if entity is None:
+                raise ToolExecutionError(f"Пользователь не найден: {user_id}")
+
+            status_info = _format_user_status(getattr(entity, "status", None))
+            return {
+                "user_id": user_id,
+                "username": getattr(entity, "username", None),
+                **status_info,
+            }
+        except ToolExecutionError:
+            raise
+        except Exception as e:
+            raise ToolExecutionError(f"Ошибка получения статуса: {str(e)}")
+        finally:
+            if client.is_connected():
+                self._run_telethon(loop, client.disconnect())
+            loop.close()
+
+    def collect_my_messages(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Собирает выборку собственных последних текстовых сообщений из нескольких
+        недавних личных чатов — сырой материал для анализа стиля общения (агент сам
+        читает выборку и формулирует style_guide через save_my_style, отдельного
+        LLM-вызова внутри инструмента нет: это работа обычного шага саб-агента)."""
+        max_messages = int(args.get("max_messages", 2000))
+        max_chats = int(args.get("max_chats", 30))
+        if max_messages <= 0 or max_messages > 2000:
+            raise ToolExecutionError("max_messages должен быть от 1 до 2000")
+        if max_chats <= 0 or max_chats > 30:
+            raise ToolExecutionError("max_chats должен быть от 1 до 30")
+
+        loop = self._create_loop()
+        client = self._create_client(loop)
+
+        try:
+            self._run_telethon(loop, client.connect())
+            if not self._run_telethon(loop, client.is_user_authorized()):
+                raise ToolExecutionError("Сначала завершите авторизацию через telegram_auth_start и telegram_auth_code")
+
+            me = self._run_telethon(loop, client.get_me())
+            dialogs = self._run_telethon(loop, client.get_dialogs(limit=max_chats * 3))
+
+            samples: list[dict[str, Any]] = []
+            for dialog in dialogs:
+                if len(samples) >= max_messages:
+                    break
+                entity = getattr(dialog, "entity", None)
+                if entity is None:
+                    continue
+                # Только личные чаты (не каналы/группы) — самый показательный образец
+                # именно разговорного стиля, а не публичных постов или групповых реплик.
+                if hasattr(entity, "broadcast") or hasattr(entity, "megagroup"):
+                    continue
+                # "Избранное" (Saved Messages) — это диалог с самим собой (entity.id == me.id):
+                # там лежат заметки/пересылки самому себе, а не переписка с другим человеком,
+                # так что как образец разговорного стиля он только портит выборку.
+                if getattr(entity, "id", None) == me.id:
+                    continue
+                remaining = max_messages - len(samples)
+                msgs = self._run_telethon(
+                    loop, client.get_messages(entity, limit=remaining, from_user=me.id)
+                )
+                chat_title = getattr(entity, "title", None) or " ".join(
+                    part for part in [getattr(entity, "first_name", ""), getattr(entity, "last_name", "")] if part
+                ).strip() or str(getattr(entity, "id", "?"))
+                for msg in msgs:
+                    text = (getattr(msg, "text", "") or "").strip()
+                    if not text:
+                        continue
+                    samples.append({"chat": chat_title, "text": text})
+                    if len(samples) >= max_messages:
+                        break
+
+            return {
+                "success": True,
+                "messages": samples,
+                "total": len(samples),
+                "note": "Проанализируй тон, длину фраз, эмодзи, обращения и характерные обороты, затем сохрани через save_my_style.",
+            }
+        except ToolExecutionError:
+            raise
+        except Exception as e:
+            raise ToolExecutionError(f"Ошибка сбора сообщений: {str(e)}")
+        finally:
+            if client.is_connected():
+                self._run_telethon(loop, client.disconnect())
+            loop.close()
+
+    def save_my_style(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Сохраняет краткое описание стиля общения пользователя (сформулированное
+        агентом по выборке из collect_my_messages), чтобы оно закрепилось в промпте
+        через tg_style_guide — аналогично тому, как закрепляется профиль."""
+        style_guide = str(args.get("style_guide", "")).strip()
+        if not style_guide:
+            raise ToolExecutionError("Не указан style_guide")
+        if len(style_guide) > 2000:
+            raise ToolExecutionError("style_guide слишком длинный (лимит 2000 символов) — сделай его короче и по сути")
+        _save_telegram_style(style_guide)
+        return {"success": True, "style_guide": style_guide}
+
     def get_contacts(self, args: dict[str, Any]) -> dict[str, Any]:
         """Получает список контактов с пагинацией."""
         limit = int(args.get("limit", 20))
@@ -589,6 +761,57 @@ class TelegramTools:
             raise ToolExecutionError("Некорректный номер телефона или username")
         except Exception as e:
             raise ToolExecutionError(f"Ошибка отправки сообщения: {str(e)}")
+        finally:
+            if client.is_connected():
+                self._run_telethon(loop, client.disconnect())
+            loop.close()
+
+    def reply_to_message(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Отвечает на конкретное сообщение в чате (chat_id из get_messages/
+        get_chats, message_id из get_messages) — устраняет неоднозначность
+        send_telegram_message, где модель иногда путала "кому я отвечаю"
+        (конкретный собеседник в группе) с "куда слать" (recipient должен
+        быть ID самого чата/группы, а не этого собеседника): здесь chat_id
+        явный и обязательный, а не выводится моделью из контекста."""
+        chat_id = str(args.get("chat_id", ""))
+        message_id_raw = str(args.get("message_id", ""))
+        message = str(args.get("message", ""))
+
+        if not chat_id:
+            raise ToolExecutionError("Не указан чат (chat_id)")
+        if not message_id_raw or not message_id_raw.isdigit():
+            raise ToolExecutionError("Не указан или некорректен message_id (id сообщения, на которое отвечаем)")
+        if not message:
+            raise ToolExecutionError("Не указан текст сообщения (message)")
+
+        loop = self._create_loop()
+        client = self._create_client(loop)
+
+        try:
+            self._run_telethon(loop, client.connect())
+            if not self._run_telethon(loop, client.is_user_authorized()):
+                raise ToolExecutionError("Сначала завершите авторизацию через telegram_auth_start и telegram_auth_code")
+
+            entity = self._resolve_entity(client, loop, chat_id)
+            if entity is None:
+                raise ToolExecutionError(f"Чат не найден: {chat_id}")
+
+            self._run_telethon(
+                loop,
+                client.send_message(entity, message, reply_to=int(message_id_raw)),
+            )
+
+            return {
+                "success": True,
+                "chat_id": chat_id,
+                "message_id": message_id_raw,
+                "message": message,
+                "status": "Отправлено",
+            }
+        except SessionPasswordNeededError:
+            raise ToolExecutionError("Требуется двухфакторная аутентификация. Введите пароль.")
+        except Exception as e:
+            raise ToolExecutionError(f"Ошибка отправки ответа: {str(e)}")
         finally:
             if client.is_connected():
                 self._run_telethon(loop, client.disconnect())

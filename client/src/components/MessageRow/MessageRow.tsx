@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import styles from "./MessageRow.module.css";
 import type { ChatEvent } from "../../types";
 import { ImageThumbGrid } from "../ImageThumbGrid/ImageThumbGrid";
+import { isWindowsPath, openPath } from "../../utils/openPath";
 import { extractMarkdownImages, normalizeAssistantText } from "../../utils/renderText";
 
 interface MessageRowProps {
@@ -15,6 +16,19 @@ const markdownComponents: Components = {
 		return <pre className={styles.codeBlock}>{children}</pre>;
 	},
 	code({ children, ...props }) {
+		const text = typeof children === "string" ? children : String(children ?? "");
+		if (isWindowsPath(text)) {
+			return (
+				<code
+					className={`${styles.inlineCode} ${styles.pathLink}`}
+					title="Открыть в проводнике"
+					onClick={() => void openPath(text.trim())}
+					{...props}
+				>
+					{text}
+				</code>
+			);
+		}
 		return (
 			<code className={styles.inlineCode} {...props}>
 				{children}

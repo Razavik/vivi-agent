@@ -5,9 +5,9 @@ from src.app_factory import (
     build_operator_registry,
     describe_all_tools,
 )
-from src.agent.agent_registry import AgentRegistry
+from src.agent.lifecycle.agent_registry import AgentRegistry
 from src.infra.config import get_settings
-from src.tools.delegate_tools import DelegateTools
+from src.tools.agent_ops.delegate_tools import DelegateTools
 
 
 def test_describe_all_tools_shape() -> None:
@@ -69,6 +69,40 @@ def test_pc_mode_ui_matches_operator_registry(monkeypatch) -> None:
     # реестр — подмножество показанного в UI набора.
     assert reg_names <= ui_names
     assert "get_screen_info" in ui_names
+
+
+def test_orchestrator_mode_operator_registers_run_tools(monkeypatch) -> None:
+    """Регрессия: view_runs/cancel_run/message_run/resume_run и т.п. нужны
+    именно в режиме оркестратора (там реально идут делегированные run,
+    которыми supervisor просит управлять при hang_detected) — а не в
+    pc_control_mode, где delegate_task недоступен и управлять нечем.
+    Раньше OPERATOR_RUN_TOOLS ошибочно попадал в фильтр "скрыть, если НЕ
+    pc_mode" в дополнение к фильтру "скрыть, если pc_mode" — из-за чего эти
+    инструменты были недоступны оператору вообще ни в одном режиме.
+
+    monkeypatch форсирует pc_mode=False явно — иначе тест зависел бы от
+    реального data/app_settings.json (пользователь мог включить режим ПК
+    в самом приложении, и тест ловил бы это как ложный провал)."""
+    import src.app_factory as af
+
+    monkeypatch.setattr(af, "is_pc_control_mode", lambda: False)
+    reg = build_operator_registry(DelegateTools(AgentRegistry()), None)
+    names = {d["name"] for d in reg.describe_all()}
+    for tool in ("view_runs", "cancel_run", "pause_run", "resume_run", "message_run"):
+        assert tool in names, f"{tool} должен быть доступен оператору в режиме оркестратора"
+    assert "delegate_task" in names
+
+
+def test_pc_mode_operator_hides_run_tools(monkeypatch) -> None:
+    """В pc_control_mode делегирования нет, поэтому управлять запусками
+    саб-агентов нечем — инструменты run-management там не нужны."""
+    import src.app_factory as af
+
+    monkeypatch.setattr(af, "is_pc_control_mode", lambda: True)
+    reg = build_operator_registry(DelegateTools(AgentRegistry()), None)
+    names = {d["name"] for d in reg.describe_all()}
+    for tool in ("view_runs", "cancel_run", "message_run", "delegate_task"):
+        assert tool not in names
 
 
 def test_catalog_consistency_across_builders() -> None:

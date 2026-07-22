@@ -3,9 +3,9 @@ from __future__ import annotations
 import threading
 import time
 
-from src.agent.run_control import RunController
-from src.agent.schemas import ActionStep
-from src.agent.sub_agent import SubAgent
+from src.agent.core.schemas import ActionStep
+from src.agent.core.sub_agent import SubAgent
+from src.agent.lifecycle.run_control import RunController
 from src.infra.chat_memory import ChatMemoryStore
 from src.infra.errors import AgentError
 

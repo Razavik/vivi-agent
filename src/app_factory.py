@@ -1,49 +1,44 @@
 from __future__ import annotations
 
-from typing import Callable
+from typing import Any, Callable
 
-from src.agent.agent_registry import AgentRegistry
-from src.agent.runtime import AgentRuntime
-from src.agent.sub_agent import SubAgent
+from src.agent.core.runtime import AgentRuntime
+from src.agent.core.sub_agent import SubAgent
+from src.agent.lifecycle.agent_registry import AgentRegistry
 from src.infra.chat_memory import ChatMemoryStore
 from src.infra.config import OPERATOR_REQUIRED_TOOLS, OPERATOR_RUN_TOOLS, Settings, get_settings, _load_agents_config, is_pc_control_mode
 from src.infra.logging import SessionLogger
-from src.llm.ollama_client import OllamaClient
+from src.llm.client_factory import LLMClient, create_llm_client
 from src.safety.path_guard import PathGuard
 from src.safety.policy import SafetyPolicy
 from src.safety.validator import ActionValidator
-from src.tools.artifact_tools import ArtifactTools
-from src.tools.catalog import operator_tool_specs, unavailable_run_tools
-from src.tools.clipboard_tools import ClipboardTools
-from src.tools.delegate_tools import DelegateTools
-from src.tools.file_tools import FileTools
-from src.tools.notification_tools import NotificationTools
-from src.tools.process_tools import ProcessTools
-from src.tools.registry import ToolRegistry, ToolSpec
-from src.tools.run_tools import RunTools
-from src.tools.screen_tools import ScreenTools
-from src.tools.system_keyboard_tools import SystemKeyboardTools
-from src.tools.system_mouse_tools import SystemMouseTools
-from src.tools.system_tools import SystemTools
-from src.tools.telegram_tools import TelegramTools
-from src.tools.web_tools import WebTools
+from src.tools.agent_ops.delegate_tools import DelegateTools
+from src.tools.agent_ops.run_tools import RunTools
+from src.tools.communication.telegram_tools import TelegramTools
+from src.tools.communication.web_tools import WebTools
+from src.tools.core.catalog import operator_tool_specs, unavailable_run_tools
+from src.tools.core.registry import ToolRegistry, ToolSpec
+from src.tools.files.artifact_tools import ArtifactTools
+from src.tools.files.file_tools import FileTools
+from src.tools.pc_control.clipboard_tools import ClipboardTools
+from src.tools.pc_control.screen_tools import ScreenTools
+from src.tools.pc_control.system_keyboard_tools import SystemKeyboardTools
+from src.tools.pc_control.system_mouse_tools import SystemMouseTools
+from src.tools.system.notification_tools import NotificationTools
+from src.tools.system.process_tools import ProcessTools
+from src.tools.system.system_tools import SystemTools
 
 
-# Инструменты оркестрации, скрытые в режиме управления ПК (pc_control_mode).
+# Инструменты оркестрации, скрытые в режиме управления ПК (pc_control_mode):
+# делегирование + управление запусками саб-агентов — в PC-режиме делегирования
+# нет, поэтому управлять нечем. OPERATOR_RUN_TOOLS (view_runs/cancel_run/...) —
+# единый источник в infra.config, чтобы этот набор не расходился с местом, где
+# те же инструменты, наоборот, ВКЛЮЧАЮТСЯ для режима оркестратора (см. ниже).
 _OPERATOR_ORCHESTRATION_TOOLS = {
     "delegate_task",
     "delegate_parallel",
     "get_agent_memory",
-    "view_runs",
-    "cancel_run",
-    "pause_run",
-    "resume_run",
-    "message_run",
-    "replace_task_run",
-    "reprioritize_run",
-    "get_world_state",
-    "wait_for_event",
-}
+} | OPERATOR_RUN_TOOLS
 
 # Инструменты управления ПК/экраном, скрытые в режиме оркестратора (не pc_control_mode).
 _OPERATOR_PC_TOOLS = {
@@ -97,7 +92,7 @@ def describe_all_tools(settings: Settings | None = None) -> list[dict[str, objec
     for spec in operator_tool_specs(_stub_delegate, unavailable_run_tools()):
         if pc_mode and spec.name in _OPERATOR_ORCHESTRATION_TOOLS:
             continue
-        if (not pc_mode) and spec.name in (OPERATOR_RUN_TOOLS | _OPERATOR_PC_TOOLS):
+        if (not pc_mode) and spec.name in _OPERATOR_PC_TOOLS:
             continue
         d = spec.describe()
         d["agent"] = "operator"
@@ -119,12 +114,16 @@ def describe_all_tools(settings: Settings | None = None) -> list[dict[str, objec
             ToolSpec("configure_telegram", "Сохранить API данные (api_id и api_hash) для Telegram", 0, telegram_tools.configure_telegram, {"api_id": "str", "api_hash": "str"}),
             ToolSpec("telegram_auth_start", "Начать авторизацию в Telegram — отправляет код на номер", 1, telegram_tools.telegram_auth_start, {"phone_number": "str"}),
             ToolSpec("telegram_auth_code", "Подтвердить авторизацию кодом (и паролем 2FA)", 1, telegram_tools.telegram_auth_code, {"phone_number": "str", "code": "str", "password": "str?"}),
-            ToolSpec("send_telegram_message", "Отправить сообщение в Telegram", 1, telegram_tools.send_message, {"recipient": "str", "message": "str"}),
+            ToolSpec("send_telegram_message", "Отправить сообщение в Telegram. recipient — это ID/username ЧАТА (тот же chat_id, что и в get_messages), а не конкретного собеседника внутри группы — чтобы ответить на сообщение конкретного человека в группе, используй reply_to_telegram_message", 1, telegram_tools.send_message, {"recipient": "str", "message": "str"}),
+            ToolSpec("reply_to_telegram_message", "Ответить на конкретное сообщение в чате (message_id из get_messages) — однозначно определяет получателя через chat_id, без риска перепутать чат с конкретным собеседником в нём", 1, telegram_tools.reply_to_message, {"chat_id": "str", "message_id": "str", "message": "str"}),
             ToolSpec("get_chats", "Получить список чатов", 0, telegram_tools.get_chats, {"limit": "int?", "offset": "int?", "chat_type": "str?"}),
             ToolSpec("get_messages", "Получить сообщения из чата, опционально только от одного отправителя (from_user). Каждое сообщение содержит media_type (photo/document/video/audio/None) — используй read_chat_image для media_type=photo", 0, telegram_tools.get_messages, {"chat_id": "str", "limit": "int?", "offset": "int?", "from_user": "str?"}),
             ToolSpec("read_chat_image", "Скачать фото из конкретного сообщения чата (id из get_messages, media_type=photo) и увидеть его как изображение", 0, telegram_tools.read_chat_image, {"chat_id": "str", "message_id": "str"}),
             ToolSpec("get_contacts", "Получить список контактов", 0, telegram_tools.get_contacts, {"limit": "int?", "offset": "int?"}),
             ToolSpec("get_own_telegram_profile", "Обновить и получить свой закреплённый профиль в Telegram (username, имя, id)", 0, telegram_tools.get_own_profile, {}),
+            ToolSpec("get_user_status", "Узнать статус собеседника: online/offline/recently/last_week/last_month + last_seen, если доступен", 0, telegram_tools.get_user_status, {"user_id": "str"}),
+            ToolSpec("collect_my_messages", "Собрать выборку своих последних текстовых сообщений из нескольких личных чатов (по умолчанию до 500 сообщений из до 30 чатов) — сырой материал для анализа стиля общения", 0, telegram_tools.collect_my_messages, {"max_messages": "int?", "max_chats": "int?"}),
+            ToolSpec("save_my_style", "Сохранить краткое описание стиля общения пользователя, чтобы оно закрепилось в промпте", 0, telegram_tools.save_my_style, {"style_guide": "str"}),
         ]),
         ("file", [
             ToolSpec("read_text_file", "Прочитать текстовый файл целиком", 0, file_tools.read_text_file, {"path": "str"}),
@@ -202,7 +201,7 @@ def _make_memory_store(settings: Settings, agent_name: str) -> ChatMemoryStore:
 
 
 def _make_ask_operator_callback(
-    llm_client: OllamaClient,
+    llm_client: LLMClient,
     event_sink: Callable[[str, object], None] | None,
     memory_store: "ChatMemoryStore | None" = None,
     get_runtime_state: "Callable[[], object | None] | None" = None,
@@ -345,12 +344,16 @@ def _build_all_tool_specs(
         ToolSpec("configure_telegram", "Сохранить API данные (api_id и api_hash) для Telegram", 0, telegram_tools.configure_telegram, {"api_id": "str", "api_hash": "str"}),
         ToolSpec("telegram_auth_start", "Начать авторизацию в Telegram - отправляет код на номер", 1, telegram_tools.telegram_auth_start, {"phone_number": "str"}),
         ToolSpec("telegram_auth_code", "Подтвердить авторизацию кодом из Telegram (и паролем 2FA)", 1, telegram_tools.telegram_auth_code, {"phone_number": "str", "code": "str", "password": "str?"}),
-        ToolSpec("send_telegram_message", "Отправить сообщение в Telegram от имени пользователя", 1, telegram_tools.send_message, {"recipient": "str", "message": "str"}),
+        ToolSpec("send_telegram_message", "Отправить сообщение в Telegram от имени пользователя. recipient — это ID/username ЧАТА (тот же chat_id, что и в get_messages), а не конкретного собеседника внутри группы — чтобы ответить на сообщение конкретного человека в группе, используй reply_to_telegram_message", 1, telegram_tools.send_message, {"recipient": "str", "message": "str"}),
+        ToolSpec("reply_to_telegram_message", "Ответить на конкретное сообщение в чате (message_id из get_messages) — однозначно определяет получателя через chat_id, без риска перепутать чат с конкретным собеседником в нём", 1, telegram_tools.reply_to_message, {"chat_id": "str", "message_id": "str", "message": "str"}),
         ToolSpec("get_chats", "Получить список чатов (limit до 100, offset, chat_type: all/unknown(user)/channel)", 0, telegram_tools.get_chats, {"limit": "int?", "offset": "int?", "chat_type": "str?"}),
         ToolSpec("get_messages", "Получить сообщения из чата (chat_id, limit до 500, offset), опционально только от одного отправителя (from_user). Каждое сообщение содержит media_type (photo/document/video/audio/None)", 0, telegram_tools.get_messages, {"chat_id": "str", "limit": "int?", "offset": "int?", "from_user": "str?"}),
         ToolSpec("read_chat_image", "Скачать фото из конкретного сообщения чата (id из get_messages, media_type=photo) и увидеть его как изображение", 0, telegram_tools.read_chat_image, {"chat_id": "str", "message_id": "str"}),
         ToolSpec("get_contacts", "Получить список контактов (limit, offset)", 0, telegram_tools.get_contacts, {"limit": "int?", "offset": "int?"}),
         ToolSpec("get_own_telegram_profile", "Обновить и получить свой закреплённый профиль в Telegram (username, имя, id)", 0, telegram_tools.get_own_profile, {}),
+        ToolSpec("get_user_status", "Узнать статус собеседника: online/offline/recently/last_week/last_month + last_seen, если доступен", 0, telegram_tools.get_user_status, {"user_id": "str"}),
+        ToolSpec("collect_my_messages", "Собрать выборку своих последних текстовых сообщений из нескольких личных чатов — сырой материал для анализа стиля общения", 0, telegram_tools.collect_my_messages, {"max_messages": "int?", "max_chats": "int?"}),
+        ToolSpec("save_my_style", "Сохранить краткое описание стиля общения пользователя, чтобы оно закрепилось в промпте", 0, telegram_tools.save_my_style, {"style_guide": "str"}),
     ]
 
     # Артефактные инструменты (только если есть server_context)
@@ -369,6 +372,32 @@ def _build_all_tool_specs(
     return {s.name: s for s in specs}
 
 
+def _make_telegram_wait_message_poll(
+    all_specs: dict[str, ToolSpec],
+) -> Callable[[str, int | None, str | None], list[dict[str, Any]]] | None:
+    """Строит хук для досрочного выхода из wait() у telegram-агента: периодически
+    дергает тот же get_messages, что зарегистрирован как обычный инструмент (та же
+    telegram_tools-инстанция), и возвращает только сообщения новее since_id."""
+    get_messages_spec = all_specs.get("get_messages")
+    if get_messages_spec is None:
+        return None
+
+    def _poll(chat_id: str, since_id: int | None, from_user: str | None) -> list[dict[str, Any]]:
+        if since_id is None:
+            return []
+        args: dict[str, Any] = {"chat_id": chat_id, "limit": 10}
+        if from_user:
+            args["from_user"] = from_user
+        try:
+            result = get_messages_spec.handler(args)
+        except Exception:
+            return []
+        messages = result.get("messages", []) if isinstance(result, dict) else []
+        return [m for m in messages if isinstance(m.get("id"), int) and m["id"] > since_id]
+
+    return _poll
+
+
 def _build_prompt_vars(agent_name: str) -> dict[str, str]:
     """Готовит дополнительные плейсхолдеры системного промпта конкретного
     саб-агента. Сейчас используется только для telegram — "закреплённый" профиль
@@ -376,23 +405,26 @@ def _build_prompt_vars(agent_name: str) -> dict[str, str]:
     агент знал, от чьего имени он действует, без похода в сеть на каждый запуск."""
     if agent_name != "telegram":
         return {}
-    from src.tools.telegram_tools import load_telegram_profile
+    from src.tools.communication.telegram_tools import load_telegram_profile, load_telegram_style
+
+    style_guide = load_telegram_style() or "не определён (можно выучить через collect_my_messages + save_my_style)"
 
     profile = load_telegram_profile()
     if not profile:
         return {
             "tg_username": "не указан (профиль ещё не синхронизирован)",
             "tg_display_name": "неизвестно",
+            "tg_style_guide": style_guide,
         }
     username = profile.get("username") or "без username"
     full_name = " ".join(
         part for part in [profile.get("first_name", ""), profile.get("last_name", "")] if part
     ).strip() or "не указано"
-    return {"tg_username": str(username), "tg_display_name": full_name}
+    return {"tg_username": str(username), "tg_display_name": full_name, "tg_style_guide": style_guide}
 
 
 def _build_sub_agents(
-    client: OllamaClient,
+    client: LLMClient,
     settings: Settings,
     event_sink: Callable[[str, object], None] | None = None,
     server_context: object | None = None,
@@ -402,20 +434,12 @@ def _build_sub_agents(
         return AgentRegistry()
     all_specs = _build_all_tool_specs(settings, server_context)
     agents_config = _load_agents_config()
+    telegram_wait_poll = _make_telegram_wait_message_poll(all_specs)
 
-    def _make_client(agent_key: str) -> OllamaClient:
-        # timeout_seconds=None означает requests без таймаута вообще: если Ollama
-        # зависнет и не ответит, блокирующий вызов саб-агента не завершится никогда
-        # (и не будет прерван даже отменой — см. RunController cancel-колбэк).
-        return OllamaClient(
-            settings.ollama_base_url,
-            settings.get_model(agent_key),
-            settings.request_timeout_seconds,
-            num_ctx=settings.num_ctx,
-            api_key=settings.ollama_api_key,
-            keep_alive=settings.ollama_keep_alive,
-            think=settings.ollama_think,
-        )
+    def _make_client(agent_key: str) -> LLMClient:
+        # Модель agent_key может быть как Ollama-тегом, так и "codex:..." —
+        # create_llm_client сама решает, какой клиент поднять (см. модуль).
+        return create_llm_client(settings, agent_key)
 
     registry = AgentRegistry()
 
@@ -452,6 +476,7 @@ def _build_sub_agents(
             user_name=settings.user_name,
             prompt_vars=_build_prompt_vars(agent_name),
             server_context=server_context,
+            wait_message_poll=telegram_wait_poll if agent_name == "telegram" else None,
         )
         registry.register(sub)
 
@@ -489,7 +514,7 @@ def build_operator_registry(
     for spec in specs:
         if pc_mode and spec.name in _OPERATOR_ORCHESTRATION_TOOLS:
             continue
-        if (not pc_mode) and spec.name in (OPERATOR_RUN_TOOLS | _OPERATOR_PC_TOOLS):
+        if (not pc_mode) and spec.name in _OPERATOR_PC_TOOLS:
             continue
         if enabled_names is not None and spec.name not in enabled_names:
             continue
@@ -507,15 +532,7 @@ def build_runtime(
 ) -> tuple[AgentRuntime, ToolRegistry, Settings]:
     settings = settings or get_settings()
 
-    operator_client = OllamaClient(
-        settings.ollama_base_url,
-        settings.get_model("operator"),
-        settings.request_timeout_seconds,
-        num_ctx=settings.num_ctx,
-        api_key=settings.ollama_api_key,
-        keep_alive=settings.ollama_keep_alive,
-        think=settings.ollama_think,
-    )
+    operator_client = create_llm_client(settings, "operator")
 
     memory_store = ChatMemoryStore(settings.memory_file)
 

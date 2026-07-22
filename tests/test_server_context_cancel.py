@@ -4,7 +4,7 @@ from threading import Event
 
 import pytest
 
-from src.agent.run_control import RunController
+from src.agent.lifecycle.run_control import RunController
 from src.infra.config import Settings
 from src.web.context import ServerContext
 

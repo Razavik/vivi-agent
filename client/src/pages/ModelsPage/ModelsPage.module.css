@@ -164,3 +164,50 @@
 	border-color: rgba(255, 255, 255, 0.2);
 	color: var(--text-main);
 }
+
+.switchControl {
+	margin-left: auto;
+	display: inline-flex;
+	align-items: center;
+	cursor: pointer;
+	flex-shrink: 0;
+}
+
+.switchControl input {
+	position: absolute;
+	opacity: 0;
+	pointer-events: none;
+}
+
+.switchTrack {
+	width: 42px;
+	height: 24px;
+	border-radius: 999px;
+	background: rgba(255, 255, 255, 0.08);
+	border: 1px solid var(--border);
+	padding: 2px;
+	transition:
+		background 0.15s,
+		border-color 0.15s;
+}
+
+.switchThumb {
+	display: block;
+	width: 18px;
+	height: 18px;
+	border-radius: 50%;
+	background: var(--text-muted);
+	transition:
+		transform 0.15s,
+		background 0.15s;
+}
+
+.switchControl input:checked + .switchTrack {
+	background: var(--accent-dim);
+	border-color: var(--accent);
+}
+
+.switchControl input:checked + .switchTrack .switchThumb {
+	background: var(--accent);
+	transform: translateX(18px);
+}

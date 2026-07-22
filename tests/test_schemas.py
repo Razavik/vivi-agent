@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.agent.schemas import ActionStep, SubAgentResult
+from src.agent.core.schemas import ActionStep, SubAgentResult
 from src.infra.errors import ValidationError
 
 

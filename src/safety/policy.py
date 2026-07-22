@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from src.agent.schemas import ActionStep
+from src.agent.core.schemas import ActionStep
 from src.infra.errors import PolicyError
-from src.tools.registry import ToolSpec
+from src.tools.core.registry import ToolSpec
 
 
 class SafetyPolicy:

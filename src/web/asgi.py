@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from websockets.exceptions import ConnectionClosed
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -79,21 +80,6 @@ async def get_runs() -> JSONResponse:
 @app.get("/api/supervisor/alerts")
 async def get_supervisor_alerts() -> JSONResponse:
     return _json(await run_in_threadpool(routes.get_supervisor_alerts))
-
-
-@app.get("/api/bus")
-async def get_bus() -> JSONResponse:
-    return _json(await run_in_threadpool(routes.get_bus_history))
-
-
-@app.get("/api/crashes")
-async def get_crashes() -> JSONResponse:
-    return _json(await run_in_threadpool(routes.get_crash_reports))
-
-
-@app.get("/api/crashes/{filename:path}")
-async def get_crash(filename: str) -> JSONResponse:
-    return _json(await run_in_threadpool(routes.get_crash_report, filename))
 
 
 @app.get("/api/runs/{run_id}/artifacts")
@@ -175,6 +161,19 @@ async def get_user_profile() -> JSONResponse:
     return _json(await run_in_threadpool(routes.get_user_profile))
 
 
+@app.get("/api/telegram-style")
+async def get_telegram_style() -> JSONResponse:
+    return _json(await run_in_threadpool(routes.get_telegram_style))
+
+
+@app.post("/api/telegram-style")
+async def set_telegram_style(request: Request) -> JSONResponse:
+    payload = await _body(request)
+    if payload is None:
+        return _json({"error": "Некорректный JSON"}, 400)
+    return _json(await run_in_threadpool(routes.set_telegram_style, payload))
+
+
 @app.get("/api/operator-skills")
 async def get_operator_skills() -> JSONResponse:
     return _json(await run_in_threadpool(routes.get_operator_skills))
@@ -187,6 +186,8 @@ async def run_task(request: Request):
         return _json({"error": "Некорректный JSON"}, 400)
     task = payload.get("task")
     images = payload.get("images") or []
+    raw_preferred = payload.get("preferred_agents") or []
+    preferred_agents = [str(name) for name in raw_preferred if isinstance(name, str) and name.strip()]
     if (not isinstance(task, str) or not task.strip()) and not images:
         return _json({"error": "Поле task должно быть непустой строкой"}, 400)
 
@@ -198,7 +199,7 @@ async def run_task(request: Request):
 
     def run_blocking() -> None:
         try:
-            routes.run_task((task or "").strip(), [], write_sse, images=images)
+            routes.run_task((task or "").strip(), [], write_sse, images=images, preferred_agents=preferred_agents)
         finally:
             loop.call_soon_threadsafe(queue.put_nowait, None)
 
@@ -275,6 +276,11 @@ def _confirm_payload(payload: dict[str, Any]) -> Any:
 @app.post("/api/history/clear")
 async def clear_history() -> JSONResponse:
     return _json(await run_in_threadpool(routes.clear_history))
+
+
+@app.post("/api/history/compress")
+async def compress_memory() -> JSONResponse:
+    return _json(await run_in_threadpool(routes.compress_memory))
 
 
 @app.post("/api/logs/clear")
@@ -490,7 +496,10 @@ async def _ws_subscribe_operator(websocket: WebSocket, msg: dict[str, Any]) -> N
 async def _ws_subscribe_supervisor(websocket: WebSocket) -> None:
     existing = await run_in_threadpool(routes.get_supervisor_alerts, 20)
     for alert in existing.get("alerts", []):
-        await websocket.send_json(alert)
+        try:
+            await websocket.send_json(alert)
+        except (WebSocketDisconnect, ConnectionClosed):
+            return
 
     queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=50)
     loop = asyncio.get_running_loop()
@@ -503,9 +512,15 @@ async def _ws_subscribe_supervisor(websocket: WebSocket) -> None:
         while True:
             try:
                 alert = await asyncio.wait_for(queue.get(), timeout=30.0)
-                await websocket.send_json(alert)
+                try:
+                    await websocket.send_json(alert)
+                except (WebSocketDisconnect, ConnectionClosed):
+                    break
             except asyncio.TimeoutError:
-                await websocket.send_json({"event": "ping"})
+                try:
+                    await websocket.send_json({"event": "ping"})
+                except (WebSocketDisconnect, ConnectionClosed):
+                    break
     except WebSocketDisconnect:
         pass
     finally:

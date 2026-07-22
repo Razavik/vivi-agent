@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import tiktoken
-from src.agent.state import SessionState
+from src.agent.core.state import SessionState
 from src.infra.config import is_pc_control_mode
 from src.infra.operator_skills import build_operator_skills_block
 
@@ -72,6 +72,7 @@ def build_dynamic_system_prompt(
     base_prompt: str,
     tool_descriptions: list[dict[str, object]],
     available_agents: list[dict[str, str]] | None,
+    preferred_agents: list[str] | None = None,
 ) -> str:
     tool_names = {str(tool.get("name", "")) for tool in tool_descriptions if tool.get("name")}
     blocks = [_build_available_actions_block(tool_names)]
@@ -79,7 +80,7 @@ def build_dynamic_system_prompt(
     if skills_block:
         blocks.append(skills_block)
     if tool_names & DELEGATION_TOOL_NAMES:
-        blocks.append(_build_delegation_block(tool_names, available_agents or []))
+        blocks.append(_build_delegation_block(tool_names, available_agents or [], preferred_agents))
     if tool_names & RUN_TOOL_NAMES:
         blocks.append(_build_run_tools_block(tool_names))
     if tool_names & PC_TOOL_NAMES:
@@ -99,7 +100,11 @@ def _build_available_actions_block(tool_names: set[str]) -> str:
     )
 
 
-def _build_delegation_block(tool_names: set[str], available_agents: list[dict[str, str]]) -> str:
+def _build_delegation_block(
+    tool_names: set[str],
+    available_agents: list[dict[str, str]],
+    preferred_agents: list[str] | None = None,
+) -> str:
     agents = ", ".join(str(agent.get("name", "")) for agent in available_agents if agent.get("name"))
     lines = [
         "== ДЕЛЕГИРОВАНИЕ ==",
@@ -117,6 +122,14 @@ def _build_delegation_block(tool_names: set[str], available_agents: list[dict[st
             "- Каждая делегация должна содержать цель, границы ответственности, что проверить и формат результата.",
         ]
     )
+    if preferred_agents:
+        preferred_names = ", ".join(preferred_agents)
+        lines.append(
+            f"- Пользователь отметил как приоритетные для этой сессии: {preferred_names}. "
+            "Это мягкая подсказка, а не жёсткое правило: при прочих равных (когда несколько агентов "
+            "подошли бы по возможностям) предпочитай именно их. Но если задаче реально нужен другой "
+            "агент по описанию/возможностям — делегируй ему, не подгоняй выбор под приоритет в ущерб результату."
+        )
     return "\n".join(lines)
 
 
@@ -259,7 +272,7 @@ def count_tokens(messages: list[dict[str, str]], model: str = "gemma4:31b-cloud"
         return total_chars // 4
 
 
-def build_messages(state: SessionState, tool_descriptions: list[dict[str, object]], workspace_root: str, user_name: str = "Пользователь", available_agents: list[dict[str, str]] | None = None, images: list[str] | None = None, active_runs: list[dict[str, Any]] | None = None, supervisor_observations: list[dict[str, Any]] | None = None, user_profile: dict[str, str] | None = None) -> tuple[list[dict[str, object]], int]:
+def build_messages(state: SessionState, tool_descriptions: list[dict[str, object]], workspace_root: str, user_name: str = "Пользователь", available_agents: list[dict[str, str]] | None = None, images: list[str] | None = None, active_runs: list[dict[str, Any]] | None = None, supervisor_observations: list[dict[str, Any]] | None = None, user_profile: dict[str, str] | None = None, preferred_agents: list[str] | None = None) -> tuple[list[dict[str, object]], int]:
     profile = user_profile or {}
     tool_names = {str(tool.get("name", "")) for tool in tool_descriptions if tool.get("name")}
     pc_mode = is_pc_control_mode()
@@ -270,7 +283,7 @@ def build_messages(state: SessionState, tool_descriptions: list[dict[str, object
         user_context=profile.get("context", ""),
         pc_control_mode=pc_mode,
     )
-    system_prompt = build_dynamic_system_prompt(system_prompt, tool_descriptions, available_agents)
+    system_prompt = build_dynamic_system_prompt(system_prompt, tool_descriptions, available_agents, preferred_agents)
 
     critical_instructions = build_critical_instructions(tool_names)
     visible_available_agents = (available_agents or []) if tool_names & DELEGATION_TOOL_NAMES else []

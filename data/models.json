@@ -1,10 +1,13 @@
 {
   "models": {
-    "operator": "gemma4:31b-cloud",
-    "file": "gemma4:31b-cloud",
-    "system": "gemma4:31b-cloud",
-    "web": "gemma4:31b-cloud",
-    "telegram": "gemma4:31b-cloud"
+    "operator": "opencode:opencode/mimo-v2.5-free",
+    "file": "opencode:opencode/mimo-v2.5-free",
+    "system": "opencode:opencode/mimo-v2.5-free",
+    "web": "opencode:opencode/mimo-v2.5-free",
+    "telegram": "opencode:opencode/mimo-v2.5-free"
   },
-  "custom_models": []
+  "custom_models": [],
+  "disabled_models": [
+    "opencode:opencode/big-pickle"
+  ]
 }

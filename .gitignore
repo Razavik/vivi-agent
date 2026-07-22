@@ -11,6 +11,7 @@ data/agents/*.json
 data/telegram_session*
 data/telegram_config.json
 data/telegram_profile.json
+data/telegram_style.json
 data/pending_confirm.json
 data/chat-memory.json
 data/runs.json

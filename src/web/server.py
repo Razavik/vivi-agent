@@ -41,13 +41,6 @@ class AgentWebHandler(BaseHTTPRequestHandler):
             self._send_json(routes.get_active_runs())
         elif self.path == "/api/supervisor/alerts":
             self._send_json(routes.get_supervisor_alerts())
-        elif self.path.startswith("/api/bus"):
-            self._send_json(routes.get_bus_history())
-        elif self.path == "/api/crashes":
-            self._send_json(routes.get_crash_reports())
-        elif self.path.startswith("/api/crashes/"):
-            fname = self.path[len("/api/crashes/"):]
-            self._send_json(routes.get_crash_report(fname))
         elif self.path.startswith("/api/runs/") and "/artifacts" in self.path:
             self._handle_artifacts_get(routes)
         elif self.path.startswith("/api/runs/") and self.path != "/api/runs/":

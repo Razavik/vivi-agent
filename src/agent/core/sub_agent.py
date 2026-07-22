@@ -6,23 +6,33 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Callable
 
-from src.agent.run_control import RunController
-from src.agent.schemas import ActionStep
-from src.agent.state import ChatMessage, Observation, PlanItem, SessionState
+from src.agent.core.schemas import ActionStep
+from src.agent.core.state import ChatMessage, Observation, PlanItem, SessionState
+from src.agent.lifecycle.run_control import RunController
 from src.infra.chat_memory import ChatMemoryStore
 from src.infra.errors import AgentError, PolicyError, ToolExecutionError
-from src.llm.ollama_client import OllamaClient
+from src.llm.client_factory import LLMClient
 from src.safety.policy import SafetyPolicy
 from src.safety.run_policy import RunPolicy
 from src.safety.validator import ActionValidator
-from src.tools.confirmation_tools import finish_task
-from src.tools.registry import ToolRegistry, ToolSpec, result_indicates_failure
+from src.tools.core.confirmation_tools import finish_task
+from src.tools.core.registry import ToolRegistry, ToolSpec, result_indicates_failure
 
 
 _MIN_WAIT_SECONDS = 1.0
 _MAX_WAIT_SECONDS = 120.0
 _DEFAULT_WAIT_SECONDS = 20.0
 _WAIT_POLL_INTERVAL = 1.0
+# Отдельный, более редкий интервал для опроса внешнего состояния (например
+# новых сообщений в чате) внутри wait — в отличие от проверки отмены, это
+# сетевой запрос, и дёргать его так же часто, как is_cancelled(), избыточно.
+_MESSAGE_POLL_INTERVAL = 5.0
+# Порог (в символах сериализованного result), выше которого наблюдение считается
+# "тяжёлым" и перед сохранением в долгосрочную память прогоняется через LLM для
+# сжатия — вместо того чтобы копить сырые дампы (например fetch_url до 20000
+# символов) в data/agents/*-memory.json и истории в UI.
+_MEMORY_CLEAN_THRESHOLD = 800
+_MEMORY_SUMMARY_MAX_CHARS = 400
 
 
 class SubAgent:
@@ -34,12 +44,13 @@ class SubAgent:
         display_name: str,
         prompt_path: str,
         tools: list,  # list[ToolSpec]
-        client: OllamaClient,
+        client: LLMClient,
         memory_store: ChatMemoryStore,
         max_steps: int = 50,
         user_name: str = "Пользователь",
         prompt_vars: dict[str, str] | None = None,
         server_context: Any | None = None,
+        wait_message_poll: Callable[[str, int | None, str | None], list[dict[str, Any]]] | None = None,
     ) -> None:
         self.name = name
         self.display_name = display_name
@@ -58,6 +69,12 @@ class SubAgent:
         # модели (через images в LLM-запросе), но не превращаются в URL для
         # прямой отдачи оператору/пользователю.
         self.server_context = server_context
+        # Опциональный хук для досрочного выхода из wait, если во время ожидания
+        # появилось новое сообщение (chat_id, since_message_id, from_user) -> список
+        # новых сообщений. Сейчас реально подключается только для telegram-агента
+        # (см. app_factory._build_sub_agents); для остальных агентов None, и wait
+        # ведёт себя как раньше — просто таймер с проверкой отмены.
+        self.wait_message_poll = wait_message_poll
 
         # Реестр собственных инструментов (без ask_operator — добавляется при run())
         self._base_tools = list(tools)
@@ -101,11 +118,15 @@ class SubAgent:
                 "Приостановить свою работу на seconds секунд (1-120, по умолчанию 20), чтобы выждать "
                 "внешнее событие — например, ответ собеседника в переписке. Не завершает задачу. "
                 "Для многошагового ожидания вызывай wait несколько раз подряд, проверяя результат "
-                "между вызовами (например get_messages для Telegram)."
+                "между вызовами (например get_messages для Telegram). Если передать chat_id и "
+                "since_message_id (максимальный id уже увиденного сообщения в этом чате, опционально "
+                "from_user), wait сам периодически проверяет чат и досрочно вернётся, как только "
+                "появится новое сообщение (new_message_detected=true, new_messages=[...]) — не нужно "
+                "ждать полный таймер и вручную гонять wait+get_messages в цикле."
             ),
             0,
             self._make_wait_handler(controller),
-            {"seconds": "float?", "reason": "str?"},
+            {"seconds": "float?", "reason": "str?", "chat_id": "str?", "since_message_id": "int?", "from_user": "str?"},
         ))
         if ask_operator is not None:
             def _ask_operator_handler(args: dict[str, Any]) -> dict[str, Any]:
@@ -132,7 +153,19 @@ class SubAgent:
             seconds = max(_MIN_WAIT_SECONDS, min(requested, _MAX_WAIT_SECONDS))
             reason = str(args.get("reason", "")).strip()
 
+            chat_id = str(args.get("chat_id", "")).strip()
+            from_user = str(args.get("from_user", "")).strip() or None
+            since_id_raw = args.get("since_message_id")
+            try:
+                since_id = int(since_id_raw) if since_id_raw is not None else None
+            except (TypeError, ValueError):
+                since_id = None
+            # Без since_message_id нечего сравнивать с "новым" — опрос включаем только
+            # когда явно есть и chat_id, и точка отсчёта.
+            poll = self.wait_message_poll if (chat_id and since_id is not None) else None
+
             deadline = time.monotonic() + seconds
+            next_poll_at = time.monotonic()
             while True:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -143,16 +176,107 @@ class SubAgent:
                         "interrupted": True,
                         "reason": reason,
                     }
+                if poll is not None and time.monotonic() >= next_poll_at:
+                    next_poll_at = time.monotonic() + _MESSAGE_POLL_INTERVAL
+                    try:
+                        new_messages = poll(chat_id, since_id, from_user)
+                    except Exception:
+                        new_messages = []
+                    if new_messages:
+                        return {
+                            "waited_seconds": round(seconds - remaining, 1),
+                            "interrupted": False,
+                            "new_message_detected": True,
+                            "new_messages": new_messages,
+                            "reason": reason,
+                        }
                 time.sleep(min(_WAIT_POLL_INTERVAL, remaining))
 
-            return {"waited_seconds": seconds, "interrupted": False, "reason": reason}
+            return {"waited_seconds": seconds, "interrupted": False, "new_message_detected": False, "reason": reason}
 
         return _wait_handler
+
+    def _clean_observations_for_memory(self, observations: list[Observation]) -> list[Observation]:
+        """Сжимает "тяжёлые" результаты наблюдений (сериализация длиннее
+        _MEMORY_CLEAN_THRESHOLD — типично fetch_url/search_web) через отдельный
+        LLM-вызов перед сохранением в долгосрочную память, вместо простой обрезки:
+        модель оставляет ключевые факты, а не первые N символов текста. Внутри
+        текущего запуска (compact_observations, следующий шаг LLM) наблюдения
+        остаются полными — эта чистка применяется только к копии, которая уйдёт
+        в memory_store.append_session/write_snapshot."""
+        heavy_indices: list[int] = []
+        for i, obs in enumerate(observations):
+            try:
+                size = len(obs.result) if isinstance(obs.result, str) else len(json.dumps(obs.result, ensure_ascii=False))
+            except (TypeError, ValueError):
+                continue
+            if size > _MEMORY_CLEAN_THRESHOLD:
+                heavy_indices.append(i)
+
+        if not heavy_indices:
+            return observations
+
+        payload = [
+            {"index": i, "action": observations[i].action, "result": observations[i].result}
+            for i in heavy_indices
+        ]
+        prompt = (
+            "Ниже результаты вызовов инструментов агента, слишком длинные для "
+            "хранения в памяти как есть. Для каждого элемента напиши краткое "
+            f"резюме (до {_MEMORY_SUMMARY_MAX_CHARS} символов) — только реальные "
+            "факты и данные из result, которые могут понадобиться в будущем "
+            "(конкретные цифры, ссылки, выводы), без домыслов. Верни строго JSON "
+            "вида {\"summaries\": [{\"index\": <int>, \"summary\": <str>}, ...]} "
+            "той же длины и с теми же index, без пояснений вне JSON.\n\n"
+            f"{json.dumps(payload, ensure_ascii=False)}"
+        )
+
+        try:
+            raw = self.client.chat([{"role": "user", "content": prompt}])
+            parsed = json.loads(raw)
+            summaries = {
+                int(item["index"]): str(item["summary"])
+                for item in parsed["summaries"]
+                if isinstance(item, dict) and "index" in item and "summary" in item
+            }
+        except Exception:
+            summaries = {}
+
+        cleaned = list(observations)
+        for i in heavy_indices:
+            summary = summaries.get(i)
+            if not summary:
+                # LLM недоступна/вернула мусор — safety net: простая обрезка вместо
+                # полной потери данных или падения сохранения памяти.
+                raw_text = (
+                    observations[i].result
+                    if isinstance(observations[i].result, str)
+                    else json.dumps(observations[i].result, ensure_ascii=False)
+                )
+                summary = raw_text[:_MEMORY_SUMMARY_MAX_CHARS] + "... (не удалось сжать через LLM, обрезано)"
+            cleaned[i] = Observation(
+                step=observations[i].step,
+                action=observations[i].action,
+                result={"summary": summary, "cleaned_for_memory": True},
+                success=observations[i].success,
+                thought=observations[i].thought,
+            )
+        return cleaned
+
+    def _persist_memory(self, state: SessionState) -> None:
+        """Сохраняет сессию в долгосрочную память, предварительно сжимая тяжёлые
+        результаты наблюдений (см. _clean_observations_for_memory)."""
+        try:
+            cleaned = self._clean_observations_for_memory(state.observations)
+        except Exception:
+            cleaned = state.observations
+        self.memory_store.append_session(state.chat_history, cleaned, self.client.model)
 
     def _load_prompt(self) -> str:
         path = Path(self.prompt_path)
         if not path.is_absolute():
-            path = Path(__file__).resolve().parents[2] / self.prompt_path
+            # prompts/... лежит в корне проекта, а не в src/
+            path = Path(__file__).resolve().parents[3] / self.prompt_path
         prompt = path.read_text(encoding="utf-8")
         shared_path = path.parent / "_shared.txt"
         if shared_path.exists():
@@ -322,6 +446,10 @@ class SubAgent:
                 if llm_resp is not None and llm_resp.thinking:
                     step_dict["thought"] = llm_resp.thinking
                     step_dict["thought_source"] = "native"
+                elif step_dict.get("thought"):
+                    # Модель без отдельного канала reasoning — показываем её
+                    # собственное поле thought из JSON-ответа как блок размышления.
+                    step_dict["thought_source"] = "self"
                 else:
                     step_dict.pop("thought", None)
                 self._emit(event_sink, "sub_agent_step", {
@@ -354,7 +482,7 @@ class SubAgent:
 
                 if result is not None:
                     state.add_chat_message("assistant", result, plan=state.plan)
-                    self.memory_store.append_session(state.chat_history, state.observations, self.client.model)
+                    self._persist_memory(state)
                     final_payload = self._build_final_payload(run_id, result, step_number, state, success=True, image_urls=image_urls)
                     self._emit(event_sink, "sub_agent_finished", {
                         "agent": self.name,
@@ -373,7 +501,7 @@ class SubAgent:
                     "agent": self.name, "run_id": run_id, "step": step_number, "message": policy_msg
                 })
                 state.add_chat_message("assistant", policy_msg, plan=state.plan)
-                self.memory_store.append_session(state.chat_history, state.observations, self.client.model)
+                self._persist_memory(state)
                 self._emit(event_sink, "sub_agent_finished", {
                     "agent": self.name, "run_id": run_id, "result": policy_msg, "success": False
                 })
@@ -382,7 +510,7 @@ class SubAgent:
                 if controller is not None and controller.is_cancelled():
                     cancelled_msg = f"Агент {self.display_name} прерван"
                     state.add_chat_message("assistant", cancelled_msg, plan=state.plan)
-                    self.memory_store.append_session(state.chat_history, state.observations, self.client.model)
+                    self._persist_memory(state)
                     self._emit(event_sink, "sub_agent_finished", {
                         "agent": self.name, "run_id": run_id, "result": cancelled_msg, "success": False, "cancelled": True
                     })
@@ -400,7 +528,7 @@ class SubAgent:
                 if state.consecutive_errors > 4:
                     error_msg = f"Агент {self.display_name} остановлен: {exc}"
                     state.add_chat_message("assistant", error_msg, plan=state.plan)
-                    self.memory_store.append_session(state.chat_history, state.observations, self.client.model)
+                    self._persist_memory(state)
                     self._emit(event_sink, "sub_agent_finished", {
                         "agent": self.name, "run_id": run_id, "result": error_msg, "success": False
                     })
@@ -408,7 +536,7 @@ class SubAgent:
 
         # Лимит шагов
         limit_msg = f"Агент {self.display_name} достиг лимита шагов ({self.max_steps})"
-        self.memory_store.append_session(state.chat_history, state.observations, self.client.model)
+        self._persist_memory(state)
         self._emit(event_sink, "sub_agent_error", {
             "agent": self.name, "run_id": run_id, "step": self.max_steps, "message": limit_msg
         })

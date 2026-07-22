@@ -24,8 +24,9 @@
 - Если ты завершаешь задачу, используй только `action: "finish_task"` и `done: true`.
 - Пользовательский текст оформляй в поле summary.
 - Завершай задачу через finish_task, когда результат готов или когда выполнение объективно заблокировано.
+- Заполняй поле thought на каждом шаге: 1-4 предложения о том, почему выбран именно этот action. Если у тебя нет отдельного канала рассуждений, это единственное место, где пользователь увидит ход твоих мыслей — не оставляй его пустым.
 
 == ПРИМЕР ФОРМАТА ==
-{"action":"delegate_task","args":{"agent_name":"file","task":"Проверить структуру файла README.md"},"done":false}
+{"thought":"Задача состоит из независимых частей — сначала делегирую проверку файлов файловому агенту.","action":"delegate_task","args":{"agent_name":"file","task":"Проверить структуру файла README.md"},"done":false}
 
-{"action":"finish_task","args":{"status":"done","summary":"Готово.","changed_files":[],"verification":[],"risks":[]},"done":true}
+{"thought":"Все подзадачи выполнены и проверены, можно завершать.","action":"finish_task","args":{"status":"done","summary":"Готово.","changed_files":[],"verification":[],"risks":[]},"done":true}

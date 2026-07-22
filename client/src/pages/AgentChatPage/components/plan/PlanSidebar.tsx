@@ -7,58 +7,81 @@ function getPlanForPane(pane: SubAgentPane): PlanItem[] {
 	return lastSession?.plan ?? [];
 }
 
-interface PlanSidebarProps {
-	pane: SubAgentPane;
+export interface TelegramStyleProps {
+	draft: string;
+	current: string | null;
+	saving: boolean;
+	error: string | null;
+	open: boolean;
+	onToggleOpen: () => void;
+	onDraftChange: (value: string) => void;
+	onSave: () => void;
 }
 
-export function PlanSidebar({ pane }: PlanSidebarProps) {
+interface PlanSidebarProps {
+	pane: SubAgentPane;
+	width: number;
+	telegramStyle?: TelegramStyleProps;
+}
+
+export function PlanSidebar({ pane, width, telegramStyle }: PlanSidebarProps) {
 	const plan = getPlanForPane(pane);
-	const total = plan.length;
-	const done = plan.filter((item) => item.status === "completed").length;
-	const active = plan.filter((item) => item.status === "in_progress").length;
-	const pending = plan.filter((item) => item.status === "pending").length;
-	const progress = total > 0 ? Math.round((done / total) * 100) : 0;
 
 	return (
-		<aside className={styles.sidebar}>
-			<div className={styles.summaryCard}>
-				<div className={styles.summaryTop}>
-					<span className={styles.badge}>План оркестратора</span>
-					<span className={styles.heroValue}>{progress}%</span>
+		<aside className={styles.sidebar} style={{ width }}>
+			{pane.name === "telegram" && telegramStyle && (
+				<div className={styles.styleSection}>
+					<button
+						className={styles.styleToggleBtn}
+						onClick={telegramStyle.onToggleOpen}
+					>
+						Стиль общения {telegramStyle.open ? "▾" : "▸"}
+					</button>
+					{telegramStyle.open && (
+						<div className={styles.stylePanel}>
+							<p>
+								Агент подстраивает переписку под этот текст (тон,
+								длина фраз, эмодзи). Можно изменить вручную или
+								попросить агента выучить стиль заново по своим
+								сообщениям — оба способа пишут в один и тот же
+								файл. Доступно в любой момент, вне зависимости от
+								того, запущен агент сейчас или нет.
+							</p>
+							<textarea
+								className={styles.styleTextarea}
+								value={telegramStyle.draft}
+								onChange={(e) =>
+									telegramStyle.onDraftChange(e.target.value)
+								}
+								placeholder="Не определён — агент выучит стиль сам при первой переписке, либо впиши описание вручную (тон, длина, эмодзи, обращения)."
+								maxLength={2000}
+							/>
+							<div className={styles.styleFooter}>
+								<button
+									className={styles.styleSaveBtn}
+									disabled={
+										telegramStyle.saving ||
+										telegramStyle.draft ===
+											(telegramStyle.current ?? "")
+									}
+									onClick={telegramStyle.onSave}
+								>
+									{telegramStyle.saving ? "Сохраняю…" : "Сохранить"}
+								</button>
+								{telegramStyle.error ? (
+									<span className={styles.styleError}>
+										{telegramStyle.error}
+									</span>
+								) : (
+									<span className={styles.styleHint}>
+										{telegramStyle.draft.length}/2000
+									</span>
+								)}
+							</div>
+						</div>
+					)}
 				</div>
-				<div className={styles.summaryTitle}>
-					{pane.task || "План на текущий запуск"}
-				</div>
-				<div className={styles.summaryText}>
-					{pane.status === "running"
-						? "В работе сейчас, видно активный шаг и ближайшую очередь."
-						: "История выполненного запуска без лишнего визуального шума."}
-				</div>
-				<div className={styles.miniStats}>
-					<div className={styles.statCard}>
-						<span className={styles.statLabel}>Всего</span>
-						<span className={styles.statValue}>{total}</span>
-					</div>
-					<div className={styles.statCard}>
-						<span className={styles.statLabel}>Готово</span>
-						<span className={styles.statValue}>{done}</span>
-					</div>
-					<div className={styles.statCard}>
-						<span className={styles.statLabel}>В работе</span>
-						<span className={styles.statValue}>{active}</span>
-					</div>
-					<div className={styles.statCard}>
-						<span className={styles.statLabel}>В очереди</span>
-						<span className={styles.statValue}>{pending}</span>
-					</div>
-				</div>
-				<div className={styles.progressTrack} aria-hidden="true">
-					<div
-						className={styles.progressFill}
-						style={{ width: `${progress}%` }}
-					/>
-				</div>
-			</div>
+			)}
 			{plan.length > 0 && (
 				<div className={styles.planGraph}>
 					<div className={styles.planGraphHeader}>Шаги плана</div>

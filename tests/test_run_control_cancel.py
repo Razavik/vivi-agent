@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from threading import Event
 
-from src.agent.run_control import RunController
+from src.agent.lifecycle.run_control import RunController
 
 
 def _make_controller() -> RunController:

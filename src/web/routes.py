@@ -28,7 +28,7 @@ class Routes:
         self.confirmation = ConfirmationManager(ctx)
         self.sse = SSEStream(ctx, self.confirmation)
 
-    def _load_models_payload(self) -> tuple[dict[str, str], list[str]]:
+    def _load_models_payload(self) -> tuple[dict[str, str], list[str], list[str]]:
         data: Any = {}
         if MODELS_FILE.exists():
             try:
@@ -39,9 +39,11 @@ class Routes:
         if isinstance(data, dict) and isinstance(data.get("models"), dict):
             raw_models = data.get("models", {})
             raw_custom = data.get("custom_models", [])
+            raw_disabled = data.get("disabled_models", [])
             models = {k: v for k, v in raw_models.items() if isinstance(k, str) and isinstance(v, str)}
             custom_models = [m.strip() for m in raw_custom if isinstance(m, str) and m.strip()]
-            return models, list(dict.fromkeys(custom_models))
+            disabled_models = [m.strip() for m in raw_disabled if isinstance(m, str) and m.strip()]
+            return models, list(dict.fromkeys(custom_models)), list(dict.fromkeys(disabled_models))
 
         if isinstance(data, dict):
             models = {
@@ -49,28 +51,48 @@ class Routes:
                 for k, v in data.items()
                 if isinstance(k, str) and isinstance(v, str) and k != "custom_models"
             }
-            return models, []
+            return models, [], []
 
-        return {}, []
+        return {}, [], []
 
     def get_tools(self) -> dict[str, Any]:
         return {"tools": describe_all_tools(self.ctx.settings)}
 
     def get_runtime_config(self) -> dict[str, Any]:
+        from src.llm.codex_acp_client import DEFAULT_CODEX_NUM_CTX, is_codex_model
+        from src.llm.model_capabilities import supports_vision
+        from src.llm.opencode_acp_client import (
+            DEFAULT_OPENCODE_NUM_CTX,
+            is_opencode_model,
+        )
+
+        operator_model = self.ctx.settings.get_model("operator")
+        # У ACP-моделей (Codex/OpenCode) контекстное окно принципиально
+        # другого порядка и не регулируется через OLLAMA_NUM_CTX —
+        # settings.num_ctx тут был бы неверным знаменателем для индикатора
+        # "Контекстное окно".
+        if is_codex_model(operator_model):
+            num_ctx = DEFAULT_CODEX_NUM_CTX
+        elif is_opencode_model(operator_model):
+            num_ctx = DEFAULT_OPENCODE_NUM_CTX
+        else:
+            num_ctx = self.ctx.settings.num_ctx
         return {
-            "num_ctx": self.ctx.settings.num_ctx,
+            "num_ctx": num_ctx,
             "ollama_base_url": self.ctx.settings.ollama_base_url,
             "model": self.ctx.settings.model,
+            "model_supports_vision": supports_vision(operator_model),
         }
 
     def get_models(self) -> dict[str, Any]:
         default = self.ctx.settings.model
-        data, custom_models = self._load_models_payload()
+        data, custom_models, disabled_models = self._load_models_payload()
         agents = list(_load_agents_config().keys())
         return {
             "default": default,
             "models": {a: data.get(a, "") for a in agents},
             "custom_models": custom_models,
+            "disabled_models": disabled_models,
         }
 
     def get_app_settings(self) -> dict[str, Any]:
@@ -105,9 +127,13 @@ class Routes:
     def set_models(self, body: dict[str, Any]) -> dict[str, Any]:
         models: dict[str, str] = body.get("models", {})
         custom_models = body.get("custom_models", [])
+        disabled_models = body.get("disabled_models", [])
         cleaned = {k: v for k, v in models.items() if isinstance(v, str)}
         cleaned_custom_models = list(
             dict.fromkeys(m.strip() for m in custom_models if isinstance(m, str) and m.strip())
+        )
+        cleaned_disabled_models = list(
+            dict.fromkeys(m.strip() for m in disabled_models if isinstance(m, str) and m.strip())
         )
         MODELS_FILE.parent.mkdir(parents=True, exist_ok=True)
         MODELS_FILE.write_text(
@@ -115,13 +141,19 @@ class Routes:
                 {
                     "models": cleaned,
                     "custom_models": cleaned_custom_models,
+                    "disabled_models": cleaned_disabled_models,
                 },
                 ensure_ascii=False,
                 indent=2,
             ),
             encoding="utf-8",
         )
-        return {"saved": True, "models": cleaned, "custom_models": cleaned_custom_models}
+        return {
+            "saved": True,
+            "models": cleaned,
+            "custom_models": cleaned_custom_models,
+            "disabled_models": cleaned_disabled_models,
+        }
 
     def get_tools_config(self) -> dict[str, Any]:
         """Возвращает конфигурацию инструментов для всех агентов."""
@@ -211,6 +243,31 @@ class Routes:
         _save_user_profile(cleaned)
         return {"saved": True, "profile": cleaned}
 
+    def get_telegram_style(self) -> dict[str, Any]:
+        """Отдаёт текущий style guide telegram-агента (или None, если ещё не
+        задан/не выучен) — для ручного просмотра/редактирования в UI."""
+        from src.tools.communication.telegram_tools import load_telegram_style
+
+        return {"style_guide": load_telegram_style()}
+
+    def set_telegram_style(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Ручное редактирование style guide из UI — тот же файл, что и
+        save_my_style у самого агента, так что автообучение и ручная правка не
+        расходятся в двух разных источниках правды."""
+        from src.tools.communication.telegram_tools import _save_telegram_style, load_telegram_style
+
+        style_guide = str(body.get("style_guide", "")).strip()
+        if len(style_guide) > 2000:
+            return {"error": "style_guide слишком длинный (лимит 2000 символов)"}, HTTPStatus.BAD_REQUEST
+        if not style_guide:
+            # Пустая строка — явный сброс: агент снова будет считать стиль не выученным.
+            from src.tools.communication.telegram_tools import STYLE_FILE
+
+            STYLE_FILE.unlink(missing_ok=True)
+            return {"saved": True, "style_guide": None}
+        _save_telegram_style(style_guide)
+        return {"saved": True, "style_guide": load_telegram_style()}
+
     def get_agents_history(self) -> dict[str, Any]:
         memory_dir = self.ctx.settings.sub_agent_memory_dir
         agents: list[dict[str, Any]] = []
@@ -226,9 +283,11 @@ class Routes:
                 except Exception:
                     chat_history = []
                     updated_at = None
+                sessions = data.get("sessions", [])
                 agents.append({
                     "name": agent_name,
                     "chat_history": chat_history,
+                    "sessions": sessions if isinstance(sessions, list) else [],
                     "updated_at": updated_at,
                 })
         return {"agents": agents}
@@ -266,9 +325,22 @@ class Routes:
 
     def get_history(self) -> dict[str, Any]:
         memory = self.ctx.memory_store.load()
+        chat_history = memory.get("chat_history", [])
+
+        # Грубая оценка контекста по сохранённой истории — нужна, чтобы
+        # индикатор "Контекстное окно" в composer не сбрасывался в 0% при
+        # перезагрузке страницы (реальный context_tokens приходит только
+        # SSE-событием во время активного шага и нигде не персистится).
+        from src.llm.prompt_builder import count_tokens
+
+        context_tokens_estimate = count_tokens(
+            [{"content": str(item.get("content", ""))} for item in chat_history]
+        )
+
         return {
-            "chat_history": memory.get("chat_history", []),
+            "chat_history": chat_history,
             "actions": memory.get("actions", []),
+            "context_tokens_estimate": context_tokens_estimate,
         }
 
     def get_monitor_state(self) -> dict[str, Any]:
@@ -347,17 +419,74 @@ class Routes:
         return self.ctx.read_artifact(run_id, name)
 
     def clear_history(self) -> dict[str, Any]:
-        self.ctx.memory_store.clear()
-        # Если оператор ещё выполняется (или доживает последние шаги в фоновом
-        # потоке), AgentRuntime.run() каждый шаг пишет снапшот вида
-        # base_history + текущая сессия, где base_history "заморожен" один раз
-        # в начале run(). Без сброса этот снапшот молча воскресит только что
-        # очищенную историю на следующей записи — очистка выглядит рабочей "здесь
-        # и сейчас", но откатывается после reload, когда файл перечитывается.
         runtime = self.ctx.get_runtime()
         if runtime is not None:
-            runtime._base_history = []
+            # Runtime синхронизирует очистку с любым запоздалым снапшотом
+            # (особенно после ретрая ошибочного ответа LLM).
+            runtime.clear_persisted_history()
+        else:
+            self.ctx.memory_store.clear()
         return {"cleared": True, "target": "history"}
+
+    # Записи новее этого порога остаются нетронутыми при сжатии — сохраняем
+    # свежий контекст дословно, сжимаем только то, что уже отошло в прошлое.
+    _COMPRESS_MEMORY_KEEP_RECENT = 6
+
+    def compress_memory(self) -> dict[str, Any]:
+        """Сжимает старую часть истории оператора через LLM в одну краткую
+        сводку вместо ручной полной очистки — тот же принцип, что и
+        _clean_observations_for_memory у саб-агентов, но применённый к
+        персистентной истории оператора целиком по запросу пользователя."""
+        if self.ctx.get_runtime() is not None:
+            return {"compressed": False, "error": "Оператор сейчас занят — дождитесь завершения текущего запуска"}
+
+        data = self.ctx.memory_store.load()
+        chat_history = data.get("chat_history", [])
+        if len(chat_history) <= self._COMPRESS_MEMORY_KEEP_RECENT:
+            return {"compressed": False, "reason": "История слишком короткая для сжатия"}
+
+        older = chat_history[: -self._COMPRESS_MEMORY_KEEP_RECENT]
+        recent = chat_history[-self._COMPRESS_MEMORY_KEEP_RECENT:]
+
+        lines = []
+        for item in older:
+            role = str(item.get("role", "?"))
+            content = str(item.get("content", ""))[:1500]
+            lines.append(f"{role}: {content}")
+        transcript = "\n".join(lines)
+
+        prompt = (
+            "Ниже часть истории переписки пользователя с оператором ИИ-агента. "
+            "Сожми её в краткую связную сводку на русском: ключевые факты, "
+            "договорённости, принятые решения, незавершённые задачи — то, что "
+            "реально понадобится в будущих сообщениях. Не выдумывай, используй "
+            "только то, что есть в тексте. Пиши сразу сводку, без вступлений и "
+            "пояснений вне неё.\n\n" + transcript
+        )
+
+        from src.llm.client_factory import create_llm_client
+
+        client = create_llm_client(self.ctx.settings, "operator")
+        try:
+            summary = client.chat([{"role": "user", "content": prompt}]).strip()
+        except Exception as exc:
+            return {"compressed": False, "error": f"Не удалось сжать через LLM: {exc}"}
+        if not summary:
+            return {"compressed": False, "error": "LLM вернула пустой ответ"}
+
+        compressed_entry = {
+            "role": "assistant",
+            "content": f"[Сжатая история, {len(older)} сообщений]\n{summary}",
+        }
+        new_history = [compressed_entry, *recent]
+        self.ctx.memory_store.replace_chat_history(new_history)
+
+        return {
+            "compressed": True,
+            "before_count": len(chat_history),
+            "after_count": len(new_history),
+            "summary": summary,
+        }
 
     def clear_logs(self) -> dict[str, Any]:
         log_dir = self.ctx.settings.log_dir
@@ -437,5 +566,6 @@ class Routes:
         chat_history: list[dict[str, str]],
         write_callback,
         images: list[str] | None = None,
+        preferred_agents: list[str] | None = None,
     ) -> dict[str, Any]:
-        return self.sse.run_and_stream(task, chat_history, write_callback, images=images)
+        return self.sse.run_and_stream(task, chat_history, write_callback, images=images, preferred_agents=preferred_agents)

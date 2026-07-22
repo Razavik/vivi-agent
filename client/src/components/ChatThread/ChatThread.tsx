@@ -10,12 +10,7 @@ import styles from "./ChatThread.module.css";
 import { MessageRow } from "../MessageRow/MessageRow";
 import { ThoughtBlockInThread } from "../ThoughtBlockInThread/ThoughtBlockInThread";
 import { ToolBlock } from "../ToolBlock/ToolBlock";
-import ReactMarkdown from "react-markdown";
-import type { Components } from "react-markdown";
-import remarkGfm from "remark-gfm";
 import type { ChatEvent } from "../../types";
-import { isWindowsPath, openPath } from "../../utils/openPath";
-import { normalizeAssistantText } from "../../utils/renderText";
 
 interface ChatThreadProps {
 	events: ChatEvent[];
@@ -54,35 +49,6 @@ export function ChatThread({
 	// Сбрасываем visibleCount при новых сообщениях
 	const loadMore = () => {
 		setVisibleCount((prev) => prev + LOAD_MORE_INCREMENT);
-	};
-
-	const markdownComponents: Components = {
-		pre({ children }) {
-			return <pre className={styles.codeBlock}>{children}</pre>;
-		},
-		code({ children, ...props }) {
-			const text =
-				typeof children === "string"
-					? children
-					: String(children ?? "");
-			if (isWindowsPath(text)) {
-				return (
-					<code
-						className={`${styles.inlineCode} ${styles.pathLink}`}
-						title="Открыть в проводнике"
-						onClick={() => void openPath(text.trim())}
-						{...props}
-					>
-						{text}
-					</code>
-				);
-			}
-			return (
-				<code className={styles.inlineCode} {...props}>
-					{children}
-				</code>
-			);
-		},
 	};
 
 	// Проверяем находится ли пользователь в самом низу
@@ -214,27 +180,7 @@ export function ChatThread({
 						{group.events.map((event, idx) => {
 							switch (event.type) {
 								case "message":
-									return (
-										<div
-											key={idx}
-											className={`${styles.eventRow} ${styles.answerBlock}`}
-										>
-											<div
-												className={styles.eventContent}
-											>
-												<ReactMarkdown
-													remarkPlugins={[remarkGfm]}
-													components={
-														markdownComponents
-													}
-												>
-													{normalizeAssistantText(
-														event.content || "",
-													)}
-												</ReactMarkdown>
-											</div>
-										</div>
-									);
+									return <MessageRow key={idx} message={event} />;
 								case "thought":
 									return (
 										<ThoughtBlockInThread
@@ -269,17 +215,10 @@ export function ChatThread({
 				</div>
 			)}
 			{currentAnswer && (
-				<div className={`${styles.assistantGroup}`}>
-					<div className={`${styles.eventRow} ${styles.answerBlock}`}>
-						<div className={styles.eventContent}>
-							<ReactMarkdown
-								remarkPlugins={[remarkGfm]}
-								components={markdownComponents}
-							>
-								{normalizeAssistantText(currentAnswer)}
-							</ReactMarkdown>
-						</div>
-					</div>
+				<div className={styles.assistantGroup}>
+					<MessageRow
+						message={{ type: "message", role: "assistant", content: currentAnswer }}
+					/>
 				</div>
 			)}
 		</div>

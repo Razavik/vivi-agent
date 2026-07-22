@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from src.agent.schemas import ActionStep
+import json
+
+from src.agent.core.schemas import ActionStep
 from src.infra.errors import ValidationError
-from src.tools.registry import ToolRegistry, ToolSpec
+from src.tools.core.registry import ToolRegistry, ToolSpec
 
 # Маппинг schema-типов на Python-типы для валидации
 _TYPE_MAP: dict[str, type | tuple[type, ...]] = {
@@ -13,6 +15,57 @@ _TYPE_MAP: dict[str, type | tuple[type, ...]] = {
     "list": list,
     "dict": dict,
 }
+
+
+def _coerce(value: object, base_type: str) -> object | None:
+    """Мягкое приведение типа, когда значение не совпадает с ожидаемым, но
+    синтаксически валидно для него. Модели (особенно менее сильные — напр.
+    бесплатные через OpenCode ACP) часто отдают числа/булевы как строки в
+    JSON (напр. "limit": "20"); вместо жёсткого отказа пробуем привести и
+    продолжить. Возвращает None, если привести не получилось."""
+    if base_type == "int":
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped.lstrip("-").isdigit():
+                return int(stripped)
+            return None
+        if isinstance(value, float) and value.is_integer():
+            return int(value)
+        return None
+    if base_type == "float":
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, (str, int)):
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+        return None
+    if base_type == "bool":
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in ("true", "1", "yes"):
+                return True
+            if lowered in ("false", "0", "no"):
+                return False
+        return None
+    if base_type == "str":
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return str(value)
+        return None
+    if base_type in ("list", "dict"):
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except (TypeError, ValueError):
+                return None
+            expected = _TYPE_MAP[base_type]
+            if isinstance(parsed, expected):
+                return parsed
+        return None
+    return None
 
 
 def _parse_spec(raw: str) -> tuple[str, bool, list[str] | None]:
@@ -64,13 +117,17 @@ class ActionValidator:
             if value is None and optional:
                 continue
 
-            # Проверка типа
+            # Проверка типа — с мягким приведением перед отказом (см. _coerce)
             expected = _TYPE_MAP.get(base_type)
             if expected is not None and not isinstance(value, expected):
-                raise ValidationError(
-                    f"Инструмент {tool.name}: аргумент '{name}' должен быть {base_type}, "
-                    f"получен {type(value).__name__}"
-                )
+                coerced = _coerce(value, base_type)
+                if coerced is None:
+                    raise ValidationError(
+                        f"Инструмент {tool.name}: аргумент '{name}' должен быть {base_type}, "
+                        f"получен {type(value).__name__}"
+                    )
+                value = coerced
+                step.args[name] = value
 
             # Проверка enum-значений
             if enum_values is not None and str(value) not in enum_values:

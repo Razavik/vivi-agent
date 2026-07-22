@@ -2,17 +2,17 @@ from __future__ import annotations
 
 import base64
 
-from src.agent.agent_registry import AgentRegistry
-from src.agent.runtime import AgentRuntime
-from src.agent.schemas import ActionStep, SubAgentResult
-from src.agent.state import SessionState
-from src.agent.sub_agent import SubAgent
+from src.agent.core.runtime import AgentRuntime
+from src.agent.core.schemas import ActionStep, SubAgentResult
+from src.agent.core.state import SessionState
+from src.agent.core.sub_agent import SubAgent
+from src.agent.lifecycle.agent_registry import AgentRegistry
 from src.infra.artifact_store import ArtifactStore
 from src.infra.chat_memory import ChatMemoryStore
 from src.safety.policy import SafetyPolicy
 from src.safety.validator import ActionValidator
-from src.tools.delegate_tools import DelegateTools
-from src.tools.registry import ToolRegistry, ToolSpec
+from src.tools.agent_ops.delegate_tools import DelegateTools
+from src.tools.core.registry import ToolRegistry, ToolSpec
 
 
 class _FakeServerContext:
@@ -167,7 +167,7 @@ def _make_runtime(server_context=None, tools: list[ToolSpec] | None = None) -> A
     registry = ToolRegistry()
     for spec in tools or []:
         registry.register(spec)
-    from src.tools.confirmation_tools import finish_task
+    from src.tools.core.confirmation_tools import finish_task
 
     registry.register(ToolSpec(
         "finish_task", "завершить", 0, finish_task,

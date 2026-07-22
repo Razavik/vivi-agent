@@ -279,7 +279,7 @@ if (-not [CursorWin32]::GetCursorPos([ref]$point)) { throw "GetCursorPos failed"
 
     def _take_cursor_screenshot(self, reason: str) -> dict[str, Any]:
         try:
-            from src.tools.screen_tools import ScreenTools
+            from src.tools.pc_control.screen_tools import ScreenTools
 
             cursor = self._cursor_state(clicking=False)
             width = 520

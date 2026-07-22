@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from src.infra.errors import ToolExecutionError
-from src.tools.web_tools import WebTools
+from src.tools.communication.web_tools import WebTools
 
 
 class TestDdgAntiBotDetection:
@@ -47,7 +47,7 @@ class TestSearchWebFallback:
     переключается на Bing HTML — оба бесплатны и не требуют API-ключа."""
 
     def test_uses_duckduckgo_when_available(self, monkeypatch) -> None:
-        import src.tools.web_tools as web_tools_module
+        import src.tools.communication.web_tools as web_tools_module
 
         calls: list[str] = []
 
@@ -63,7 +63,7 @@ class TestSearchWebFallback:
         assert all("duckduckgo" in u for u in calls), "Bing не должен вызываться, если DDG уже дал результаты"
 
     def test_falls_back_to_bing_when_ddg_blocked(self, monkeypatch) -> None:
-        import src.tools.web_tools as web_tools_module
+        import src.tools.communication.web_tools as web_tools_module
 
         def fake_fetch(url: str, timeout: int = 20):
             if "duckduckgo" in url:
@@ -78,7 +78,7 @@ class TestSearchWebFallback:
         assert result["results"][0]["url"] == "https://www.python.org/"
 
     def test_falls_back_to_bing_when_ddg_raises(self, monkeypatch) -> None:
-        import src.tools.web_tools as web_tools_module
+        import src.tools.communication.web_tools as web_tools_module
 
         def fake_fetch(url: str, timeout: int = 20):
             if "duckduckgo" in url:
@@ -91,7 +91,7 @@ class TestSearchWebFallback:
         assert result["provider"] == "bing"
 
     def test_raises_clear_error_when_both_providers_fail(self, monkeypatch) -> None:
-        import src.tools.web_tools as web_tools_module
+        import src.tools.communication.web_tools as web_tools_module
 
         monkeypatch.setattr(
             web_tools_module, "_fetch_raw", lambda url, timeout=20: (200, _DDG_BLOCKED_HTML)

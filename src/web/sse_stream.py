@@ -8,7 +8,7 @@ from http import HTTPStatus
 from typing import Any, Callable
 
 from src.app_factory import build_runtime
-from src.agent.events import normalize_event
+from src.agent.messaging.events import normalize_event
 from src.infra.logging import SessionLogger
 from src.web.confirmation import ConfirmationManager
 from src.web.context import ServerContext
@@ -29,9 +29,10 @@ class SSEStream:
         chat_history: list[dict[str, str]],
         write_callback: Callable[[bytes], None],
         images: list[str] | None = None,
+        preferred_agents: list[str] | None = None,
     ) -> dict[str, Any]:
         """Запускает агента в отдельном потоке и стримит SSE-события через write_callback."""
-        return self._run_agent(task, chat_history, write_callback, images=images)
+        return self._run_agent(task, chat_history, write_callback, images=images, preferred_agents=preferred_agents)
 
     def _run_autonomous(self, message: str) -> None:
         """Автономный запуск оператора без подключённого клиента (triggered by supervisor)."""
@@ -53,6 +54,7 @@ class SSEStream:
         write_callback: Callable[[bytes], None],
         images: list[str] | None = None,
         autonomous: bool = False,
+        preferred_agents: list[str] | None = None,
     ) -> dict[str, Any]:
         """Общий метод запуска агента: обычный (с write_callback) или автономный."""
         import time as _time
@@ -88,7 +90,7 @@ class SSEStream:
                     server_context=self.ctx,
                 )
                 self.ctx.set_runtime(runtime)
-                summary = runtime.run(task, chat_history=chat_history, images=images or [])
+                summary = runtime.run(task, chat_history=chat_history, images=images or [], preferred_agents=preferred_agents)
                 result_holder["summary"] = summary
                 result_holder["tools"] = registry.describe_all()
                 result_holder["log_file"] = str(logger.log_file)

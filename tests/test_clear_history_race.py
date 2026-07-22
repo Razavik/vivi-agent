@@ -31,6 +31,11 @@ class _FakeRuntime:
 
     def __init__(self, base_history: list[dict]) -> None:
         self._base_history = base_history
+        self.clear_calls = 0
+
+    def clear_persisted_history(self) -> None:
+        self.clear_calls += 1
+        self._base_history = []
 
 
 def test_clear_history_resets_active_runtime_base_history(ctx) -> None:
@@ -49,6 +54,7 @@ def test_clear_history_resets_active_runtime_base_history(ctx) -> None:
     routes.clear_history()
 
     assert runtime._base_history == []
+    assert runtime.clear_calls == 1
 
 
 def test_clear_history_without_active_runtime_does_not_error(ctx) -> None:

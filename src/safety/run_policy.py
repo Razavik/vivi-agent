@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from src.infra.errors import PolicyError
-from src.tools.registry import ToolSpec
+from src.tools.core.registry import ToolSpec
 
 
 @dataclass

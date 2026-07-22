@@ -15,12 +15,10 @@ import { ModelsPage } from "./pages/ModelsPage/ModelsPage";
 import { SkillsPage } from "./pages/SkillsPage/SkillsPage";
 import { AgentChatPage } from "./pages/AgentChatPage/AgentChatPage";
 import { SettingsPage } from "./pages/SettingsPage/SettingsPage";
-import { RunsDashboardPage } from "./pages/RunsDashboardPage/RunsDashboardPage";
-import { BusPage } from "./pages/BusPage/BusPage";
-import { CrashesPage } from "./pages/CrashesPage/CrashesPage";
 import { WatchPage } from "./pages/WatchPage/WatchPage";
 import "./index.css";
 import { fetchJson } from "./utils/http";
+import { prefetchAllPages } from "./prefetch";
 
 function pathToPage(pathname: string): NavPage {
 	if (pathname === "/") return "chat";
@@ -29,9 +27,6 @@ function pathToPage(pathname: string): NavPage {
 	if (pathname.startsWith("/models")) return "models";
 	if (pathname.startsWith("/skills")) return "skills";
 	if (pathname.startsWith("/settings")) return "settings";
-	if (pathname.startsWith("/runs")) return "runs";
-	if (pathname.startsWith("/bus")) return "bus";
-	if (pathname.startsWith("/crashes")) return "crashes";
 	return "chat";
 }
 
@@ -42,22 +37,25 @@ const PAGE_TO_PATH: Record<NavPage, string> = {
 	models: "/models",
 	skills: "/skills",
 	settings: "/settings",
-	runs: "/runs",
-	bus: "/bus",
-	crashes: "/crashes",
 };
 
 const SIDEBAR_MIN_WIDTH = 300;
 const SIDEBAR_MAX_WIDTH = 900;
 const SIDEBAR_DEFAULT_WIDTH = 320;
 
+interface AgentConfigEntry {
+	display_name?: string;
+}
+
+interface SubAgentOption {
+	name: string;
+	displayName: string;
+}
+
 function App() {
 	const supervisorAlerts = useSupervisorAlerts();
 	const [task, setTask] = useState("");
 	const [images, setImages] = useState<string[]>([]);
-	const [developerMode, setDeveloperMode] = useState(
-		() => localStorage.getItem("agent1.developerMode") === "true",
-	);
 	const [sidebarVisible, setSidebarVisible] = useState(true);
 	const [pcControlMode, setPcControlMode] = useState(false);
 	const [showMonitor, setShowMonitor] = useState(true);
@@ -67,6 +65,13 @@ function App() {
 		x: 0,
 		width: SIDEBAR_DEFAULT_WIDTH,
 	});
+	// Приоритетные саб-агенты — мягкая подсказка оператору, живёт на всю
+	// сессию (пока пользователь сам не отожмёт кнопку), не персистится между
+	// перезагрузками страницы намеренно: это разовое усиление на текущий разговор.
+	const [preferredAgents, setPreferredAgents] = useState<string[]>([]);
+	const [subAgentOptions, setSubAgentOptions] = useState<SubAgentOption[]>(
+		[],
+	);
 	const location = useLocation();
 	const navigate = useNavigate();
 	useEffect(() => {
@@ -81,6 +86,54 @@ function App() {
 			setShowMonitor(data.show_monitor !== false);
 		});
 	}, []);
+	useEffect(() => {
+		void fetchJson<{ config?: Record<string, AgentConfigEntry> }>(
+			"/api/agents-config",
+			{ config: {} },
+		).then((data) => {
+			const config = data.config ?? {};
+			const options = Object.entries(config)
+				.filter(([name]) => name !== "operator")
+				.map(([name, cfg]) => ({
+					name,
+					displayName: cfg.display_name || name,
+				}));
+			setSubAgentOptions(options);
+		});
+	}, []);
+	// Прогреваем кэш React Query для всех остальных страниц сразу при старте,
+	// параллельно с чатом — без этого при первом заходе на "Модели"/
+	// "Настройки"/"Инструменты"/... был виден лоадер, хотя данные там почти
+	// не меняются между сессиями (см. client/src/prefetch.ts).
+	useEffect(() => {
+		prefetchAllPages();
+	}, []);
+	// Общий персист pc_control_mode на сервер — используется и переключателем
+	// режима ПК, и выбором приоритетного саб-агента (см. togglePreferredAgent):
+	// оба места должны одинаково держать клиент и сервер в синхроне.
+	const persistPcControlMode = useCallback((enabled: boolean) => {
+		setPcControlMode(enabled);
+		void fetchJson("/api/app-settings", null, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ pc_control_mode: enabled }),
+		});
+	}, []);
+	const togglePreferredAgent = useCallback(
+		(name: string) => {
+			const isAdding = !preferredAgents.includes(name);
+			setPreferredAgents((prev) =>
+				prev.includes(name)
+					? prev.filter((n) => n !== name)
+					: [...prev, name],
+			);
+			// Симметрично handlePcControlModeChange: выбор приоритета имеет смысл
+			// только когда доступно делегирование, поэтому включение приоритета
+			// само выключает режим ПК (в нём delegate_task недоступен оператору).
+			if (isAdding && pcControlMode) persistPcControlMode(false);
+		},
+		[preferredAgents, pcControlMode, persistPcControlMode],
+	);
 
 	const {
 		events,
@@ -92,6 +145,7 @@ function App() {
 		confirmationRequest,
 		contextTokens,
 		contextLimit,
+		modelSupportsVision,
 		selectedModel,
 		modelOptions,
 		updateSelectedModel,
@@ -100,6 +154,7 @@ function App() {
 		cancelTask,
 		clearHistory,
 		clearLogs,
+		compressMemory,
 		clearSubAgentPanes,
 		respondToConfirmation,
 	} = useAgent();
@@ -108,20 +163,13 @@ function App() {
 	const isWatchPage = location.pathname.startsWith("/watch");
 
 	const handleNavigate = (page: NavPage) => navigate(PAGE_TO_PATH[page]);
-	const handleDeveloperModeChange = (enabled: boolean) => {
-		if (document.activeElement instanceof HTMLElement) {
-			document.activeElement.blur();
-		}
-		localStorage.setItem("agent1.developerMode", String(enabled));
-		setDeveloperMode(enabled);
-	};
 	const handlePcControlModeChange = (enabled: boolean) => {
-		setPcControlMode(enabled);
-		void fetchJson("/api/app-settings", null, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ pc_control_mode: enabled }),
-		});
+		// В режиме управления ПК оператор теряет delegate_task/delegate_parallel
+		// (см. _OPERATOR_ORCHESTRATION_TOOLS в app_factory.py) — делегировать
+		// вообще некому, поэтому приоритет саб-агентов в этом режиме бессмыслен
+		// и сбрасывается автоматически.
+		if (enabled) setPreferredAgents([]);
+		persistPcControlMode(enabled);
 	};
 	const handleShowMonitorChange = (enabled: boolean) => {
 		setShowMonitor(enabled);
@@ -179,7 +227,7 @@ function App() {
 		const currentImages = images;
 		setTask("");
 		setImages([]);
-		await runTask(currentTask, currentImages);
+		await runTask(currentTask, currentImages, preferredAgents);
 	};
 
 	const handleClearHistory = () => void clearHistory().catch(console.error);
@@ -242,7 +290,6 @@ function App() {
 						onNavigate={handleNavigate}
 						hasActiveAgents={hasActiveAgents}
 						alertCount={supervisorAlerts.alerts.length}
-						developerMode={developerMode}
 						pcControlMode={pcControlMode}
 					/>
 				)}
@@ -320,16 +367,13 @@ function App() {
 														contextTokens
 													}
 													contextLimit={contextLimit}
+													modelSupportsVision={
+														modelSupportsVision
+													}
 													selectedModel={
 														selectedModel
 													}
 													modelOptions={modelOptions}
-													onClearHistory={
-														handleClearHistory
-													}
-													onClearLogs={
-														handleClearLogs
-													}
 													onModelChange={
 														updateSelectedModel
 													}
@@ -345,7 +389,21 @@ function App() {
 													onPcControlModeChange={
 														handlePcControlModeChange
 													}
-												/>
+													subAgentOptions={
+														subAgentOptions
+													}
+													preferredAgents={
+														preferredAgents
+													}
+													onTogglePreferredAgent={
+															togglePreferredAgent
+														}
+														onClearHistory={handleClearHistory}
+														onClearLogs={handleClearLogs}
+														onCompressMemory={
+															compressMemory
+														}
+														/>
 											</div>
 											{plan.length > 0 && (
 												<>
@@ -438,12 +496,8 @@ function App() {
 								path="/settings"
 								element={
 									<SettingsPage
-										developerMode={developerMode}
 										pcControlMode={pcControlMode}
 										showMonitor={showMonitor}
-										onDeveloperModeChange={
-											handleDeveloperModeChange
-										}
 										onPcControlModeChange={
 											handlePcControlModeChange
 										}
@@ -453,38 +507,16 @@ function App() {
 									/>
 								}
 							/>
-							<Route
-								path="/runs"
-								element={
-									developerMode ? (
-										<RunsDashboardPage />
-									) : (
-										<></>
-									)
-								}
-							/>
-							<Route
-								path="/bus"
-								element={developerMode ? <BusPage /> : <></>}
-							/>
-							<Route
-								path="/crashes"
-								element={
-									developerMode ? <CrashesPage /> : <></>
-								}
-							/>
 							<Route path="*" element={<></>} />
 						</Routes>
 					</main>
 				</div>
 			</div>
-			{developerMode && (
-				<SupervisorAlerts
-					alerts={supervisorAlerts.alerts}
-					onDismiss={supervisorAlerts.dismiss}
-					onDismissAll={supervisorAlerts.dismissAll}
-				/>
-			)}
+			<SupervisorAlerts
+				alerts={supervisorAlerts.alerts}
+				onDismiss={supervisorAlerts.dismiss}
+				onDismissAll={supervisorAlerts.dismissAll}
+			/>
 		</>
 	);
 }

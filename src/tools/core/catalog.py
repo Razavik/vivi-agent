@@ -11,13 +11,13 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from src.tools.confirmation_tools import finish_task
-from src.tools.memory_tools import MemoryTools
-from src.tools.registry import ToolSpec
-from src.tools.screen_tools import ScreenTools
-from src.tools.system_keyboard_tools import SystemKeyboardTools
-from src.tools.system_mouse_tools import SystemMouseTools
-from src.tools.ui_automation_tools import UIAutomationTools
+from src.tools.core.confirmation_tools import finish_task
+from src.tools.core.registry import ToolSpec
+from src.tools.agent_ops.memory_tools import MemoryTools
+from src.tools.pc_control.screen_tools import ScreenTools
+from src.tools.pc_control.system_keyboard_tools import SystemKeyboardTools
+from src.tools.pc_control.system_mouse_tools import SystemMouseTools
+from src.tools.pc_control.ui_automation_tools import UIAutomationTools
 
 
 # Инструменты управления запусками саб-агентов (предоставляются RunTools).
